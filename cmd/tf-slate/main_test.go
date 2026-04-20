@@ -9,7 +9,7 @@ import (
 	"github.com/abuxton/tf-slate/internal/state"
 )
 
-func TestCountResourceBuckets(t *testing.T) {
+func TestCountResourcePaths(t *testing.T) {
 	summaries := []state.Summary{
 		{Path: "a.tfstate", ResourceCount: 0},
 		{Path: "b.tfstate", ResourceCount: 2},
@@ -17,9 +17,9 @@ func TestCountResourceBuckets(t *testing.T) {
 		{Path: "d.tfstate", ResourceCount: 0},
 	}
 
-	zero, nonZero := countResourceBuckets(summaries)
+	zero, nonZero := countResourcePaths(summaries)
 	if zero != 2 || nonZero != 2 {
-		t.Fatalf("countResourceBuckets() = (%d, %d), want (2, 2)", zero, nonZero)
+		t.Fatalf("countResourcePaths() = (%d, %d), want (2, 2)", zero, nonZero)
 	}
 }
 
@@ -73,8 +73,10 @@ func TestPrintSummaryTable(t *testing.T) {
 	output := buf.String()
 	for _, want := range []string{
 		"State resource summary:",
-		"| 0 resources | > 0 resources |",
-		"| 1 | 1 |",
+		"Path         Count",
+		"-------------  -----",
+		"0 resources    1",
+		"> 0 resources  1",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("printSummaryTable() output missing %q in %q", want, output)

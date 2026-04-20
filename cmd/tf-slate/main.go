@@ -66,11 +66,12 @@ func main() {
 		fmt.Println("No Terraform state files matched the selected filters")
 		return
 	}
-	if *summarize {
-		printSummaryTable(os.Stdout, displaySummaries)
-	}
 
 	printTable(os.Stdout, displaySummaries)
+	if *summarize {
+		fmt.Fprintln(os.Stdout)
+		printSummaryTable(os.Stdout, displaySummaries)
+	}
 	if *nonInteractive {
 		return
 	}
@@ -95,14 +96,27 @@ func printTable(w io.Writer, summaries []state.Summary) {
 }
 
 func printSummaryTable(w io.Writer, summaries []state.Summary) {
-	zero, nonZero := countResourceBuckets(summaries)
+	zero, nonZero := countResourcePaths(summaries)
+	rows := [][2]string{
+		{"0 resources", strconv.Itoa(zero)},
+		{"> 0 resources", strconv.Itoa(nonZero)},
+	}
+	labelWidth := len("Path")
+	countWidth := len("Count")
+	for _, row := range rows {
+		labelWidth = max(labelWidth, len(row[0]))
+		countWidth = max(countWidth, len(row[1]))
+	}
+
 	fmt.Fprintln(w, "State resource summary:")
-	fmt.Fprintln(w, "| 0 resources | > 0 resources |")
-	fmt.Fprintln(w, "| ----------- | ------------- |")
-	fmt.Fprintf(w, "| %d | %d |\n\n", zero, nonZero)
+	fmt.Fprintf(w, "%-*s  %-*s\n", labelWidth, "Path", countWidth, "Count")
+	fmt.Fprintf(w, "%s  %s\n", strings.Repeat("-", labelWidth), strings.Repeat("-", countWidth))
+	for _, row := range rows {
+		fmt.Fprintf(w, "%-*s  %s\n", labelWidth, row[0], row[1])
+	}
 }
 
-func countResourceBuckets(summaries []state.Summary) (zero, nonZero int) {
+func countResourcePaths(summaries []state.Summary) (zero, nonZero int) {
 	for _, s := range summaries {
 		if s.ResourceCount == 0 {
 			zero++
@@ -209,4 +223,11 @@ func valueOrDash(v string) string {
 func exitErr(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
