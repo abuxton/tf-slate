@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"os"
@@ -245,6 +246,68 @@ func TestRunOutputRequiresNonInteractive(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `requires --non-interactive`) {
 		t.Fatalf("run(-o json) stderr = %q, want non-interactive requirement", stderr.String())
+	}
+}
+
+func TestParseTerraformListOutput(t *testing.T) {
+	got := parseTerraformListOutput("aws_instance.web\n\nmodule.db.aws_db_instance.primary\n")
+	want := []string{"aws_instance.web", "module.db.aws_db_instance.primary"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseTerraformListOutput() = %#v, want %#v", got, want)
+	}
+}
+
+func TestHandleListActionShowsResourceAndBack(t *testing.T) {
+	var output bytes.Buffer
+	var ran [][]string
+
+	session := interactiveSession{
+		reader: bufio.NewReader(strings.NewReader("2\nback\n")),
+		out:    &output,
+		runTerraform: func(args ...string) {
+			ran = append(ran, append([]string(nil), args...))
+		},
+		captureTerraform: func(args ...string) (string, error) {
+			return "aws_instance.web\nmodule.db.aws_db_instance.primary\n", nil
+		},
+		visitDir: func(string) error { return nil },
+	}
+
+	handleListAction(session, "/tmp/example.tfstate")
+
+	wantRun := [][]string{{"state", "show", "-state=/tmp/example.tfstate", "module.db.aws_db_instance.primary"}}
+	if !reflect.DeepEqual(ran, wantRun) {
+		t.Fatalf("handleListAction() ran %#v, want %#v", ran, wantRun)
+	}
+	if !strings.Contains(output.String(), "Choose a resource to inspect or type back:") {
+		t.Fatalf("handleListAction() output = %q, want resource prompt", output.String())
+	}
+}
+
+func TestRunStateActionsVisitExits(t *testing.T) {
+	var output bytes.Buffer
+	var visited string
+
+	session := interactiveSession{
+		reader:           bufio.NewReader(strings.NewReader("visit\n")),
+		out:              &output,
+		runTerraform:     func(args ...string) {},
+		captureTerraform: func(args ...string) (string, error) { return "", nil },
+		visitDir: func(dir string) error {
+			visited = dir
+			return nil
+		},
+	}
+
+	exited := runStateActions(session, state.Summary{Path: filepath.Join("/tmp", "stack", "terraform.tfstate")})
+	if !exited {
+		t.Fatalf("runStateActions(visit) = false, want true")
+	}
+	if visited != filepath.Join("/tmp", "stack") {
+		t.Fatalf("visitDir() called with %q, want %q", visited, filepath.Join("/tmp", "stack"))
+	}
+	if !strings.Contains(output.String(), "visit  -> open a shell") {
+		t.Fatalf("runStateActions() output = %q, want visit help text", output.String())
 	}
 }
 
