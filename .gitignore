@@ -108,6 +108,7 @@ terraform.rc
 
 # Built Visual Studio Code Extensions
 *.vsix
+dist/
 
 ### VisualStudioCode Patch ###
 # Ignore all local history of files

@@ -54,6 +54,38 @@ Short aliases are also available for the new flags:
 - `-nz` for `-non-zero`
 - `-w` for `-weighted`
 
+## Taskfile automation
+
+This repository now includes a `Taskfile.yml` for common Go development workflows.
+
+```bash
+# Show available tasks
+task
+
+# Run the local development loop
+task dev
+
+# Run format, vet, and tests
+task validate
+
+# Build the CLI into dist/
+task build
+
+# Manage Go modules
+task mod:download
+task mod:tidy
+task mod:update
+
+# Preview a release tag without creating it
+task release VERSION=0.0.2 DRY_RUN=true
+
+# Create and push a semver release tag
+task release VERSION=0.0.2
+
+# Run the skills installer helper
+task skills:install
+```
+
 ## Test
 
 ```bash

@@ -1,0 +1,119 @@
+version: "3"
+
+vars:
+  BINARY_NAME: tf-slate
+  BUILD_DIR: dist
+  MAIN_PACKAGE: ./cmd/tf-slate
+
+tasks:
+  default:
+    desc: Show available tasks
+    silent: true
+    cmds:
+      - task --list
+
+  help:
+    desc: Show available tasks
+    silent: true
+    cmds:
+      - task --list
+
+  info:
+    desc: Show local toolchain information
+    cmds:
+      - go version
+      - git --version
+      - task --version
+
+  run:
+    desc: Run tf-slate locally (pass flags with CLI_ARGS="...")
+    cmds:
+      - go run {{.MAIN_PACKAGE}} {{.CLI_ARGS}}
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - go fmt ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  test:
+    desc: Run the Go test suite
+    cmds:
+      - go test ./...
+
+  build:
+    desc: Build the tf-slate binary into dist/
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.MAIN_PACKAGE}}
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf {{.BUILD_DIR}}
+
+  dev:
+    desc: Run the fast local development loop
+    deps: [test, build]
+
+  validate:
+    desc: Run formatting, vetting, and tests
+    deps: [fmt, vet, test]
+
+  ci:
+    desc: Run the local CI workflow
+    deps: [validate, build]
+
+  mod:download:
+    desc: Download Go modules
+    cmds:
+      - go mod download
+
+  mod:tidy:
+    desc: Tidy Go modules
+    cmds:
+      - go mod tidy
+
+  mod:update:
+    desc: Update Go module dependencies and tidy the module graph
+    cmds:
+      - go get -u ./...
+      - go mod tidy
+
+  skills:install:
+    desc: Run npx skills experimental_install
+    cmds:
+      - npx skills experimental_install
+
+  release:
+    desc: Create and push a semver git tag (VERSION=x.y.z or vx.y.z, DRY_RUN=true for preview)
+    deps: [validate, build]
+    requires:
+      vars: [VERSION]
+    vars:
+      NORMALIZED_VERSION:
+        sh: |
+          version="{{.VERSION}}"
+          case "$version" in
+            v*) printf "%s" "$version" ;;
+            *) printf "v%s" "$version" ;;
+          esac
+    preconditions:
+      - sh: echo "{{.NORMALIZED_VERSION}}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'
+        msg: VERSION must be a semantic version like 0.1.0 or v0.1.0
+      - sh: '[ "{{.DRY_RUN}}" = "true" ] || test -z "$(git status --porcelain)"'
+        msg: Working tree must be clean before creating a release tag unless DRY_RUN=true
+    cmds:
+      - echo "Preparing release {{.NORMALIZED_VERSION}}"
+      - |
+        if [ "{{.DRY_RUN}}" = "true" ]; then
+          echo "DRY_RUN: would create annotated tag {{.NORMALIZED_VERSION}}"
+          echo "DRY_RUN: would push tag {{.NORMALIZED_VERSION}} to origin"
+        else
+          git tag -a "{{.NORMALIZED_VERSION}}" -m "Release {{.NORMALIZED_VERSION}}"
+          git push origin "{{.NORMALIZED_VERSION}}"
+        fi
