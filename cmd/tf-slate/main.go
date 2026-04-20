@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -15,68 +16,113 @@ import (
 	"github.com/abuxton/tf-slate/internal/state"
 )
 
-func main() {
-	root := flag.String("root", ".", "root path to scan for .tfstate files")
-	nonInteractive := flag.Bool("non-interactive", false, "print state summaries without prompts")
-	summarize := flag.Bool("summarize", false, "print a summary table grouping state files by zero and non-zero resource counts")
-	flag.BoolVar(summarize, "s", false, "alias for -summarize")
-	nonZero := flag.Bool("non-zero", false, "show only state files with more than zero resources")
-	flag.BoolVar(nonZero, "nz", false, "alias for -non-zero")
-	weighted := flag.Bool("weighted", false, "sort state files by greatest resource count first")
-	flag.BoolVar(weighted, "w", false, "alias for -weighted")
-	flag.Parse()
+var version = "dev"
 
-	absRoot, err := filepath.Abs(*root)
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdout, stderr io.Writer) int {
+	fs, opts := newFlagSet(stderr)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	if opts.showVersion {
+		fmt.Fprintln(stdout, version)
+		return 0
+	}
+
+	absRoot, err := filepath.Abs(opts.root)
 	if err != nil {
-		exitErr(fmt.Errorf("resolve root path: %w", err))
+		return writeErr(stderr, fmt.Errorf("resolve root path: %w", err))
 	}
 
 	paths, err := state.FindStateFiles(absRoot)
 	if err != nil {
-		exitErr(err)
+		return writeErr(stderr, err)
 	}
 	if len(paths) == 0 {
-		fmt.Printf("No Terraform state files found under %s\n", absRoot)
-		return
+		fmt.Fprintf(stdout, "No Terraform state files found under %s\n", absRoot)
+		return 0
 	}
 
 	summaries := make([]state.Summary, 0, len(paths))
 	for _, p := range paths {
 		s, err := state.SummarizeStateFile(p)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Skipping %s: %v\n", p, err)
+			fmt.Fprintf(stderr, "Skipping %s: %v\n", p, err)
 			continue
 		}
 		summaries = append(summaries, s)
 	}
 
 	if len(summaries) == 0 {
-		fmt.Println("No parseable Terraform state files were found")
-		return
+		fmt.Fprintln(stdout, "No parseable Terraform state files were found")
+		return 0
 	}
 
 	displaySummaries := summaries
-	if *nonZero {
+	if opts.nonZero {
 		displaySummaries = filterNonZeroSummaries(displaySummaries)
 	}
-	if *weighted {
+	if opts.weighted {
 		sortSummariesWeighted(displaySummaries)
 	}
 	if len(displaySummaries) == 0 {
-		fmt.Println("No Terraform state files matched the selected filters")
-		return
+		fmt.Fprintln(stdout, "No Terraform state files matched the selected filters")
+		return 0
 	}
 
-	printTable(os.Stdout, displaySummaries)
-	if *summarize {
-		fmt.Fprintln(os.Stdout)
-		printSummaryTable(os.Stdout, displaySummaries)
+	printTable(stdout, displaySummaries)
+	if opts.summarize {
+		fmt.Fprintln(stdout)
+		printSummaryTable(stdout, displaySummaries)
 	}
-	if *nonInteractive {
-		return
+	if opts.nonInteractive {
+		return 0
 	}
 
 	runTUI(displaySummaries)
+	return 0
+}
+
+type options struct {
+	root           string
+	nonInteractive bool
+	summarize      bool
+	nonZero        bool
+	weighted       bool
+	showVersion    bool
+}
+
+func newFlagSet(stderr io.Writer) (*flag.FlagSet, *options) {
+	opts := &options{}
+
+	fs := flag.NewFlagSet("tf-slate", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	fs.StringVar(&opts.root, "root", ".", "root path to scan for .tfstate files")
+	fs.BoolVar(&opts.nonInteractive, "non-interactive", false, "print state summaries without prompts")
+	fs.BoolVar(&opts.summarize, "summarize", false, "print a summary table grouping state files by zero and non-zero resource counts")
+	fs.BoolVar(&opts.summarize, "s", false, "alias for --summarize")
+	fs.BoolVar(&opts.nonZero, "non-zero", false, "show only state files with more than zero resources")
+	fs.BoolVar(&opts.nonZero, "nz", false, "alias for --non-zero")
+	fs.BoolVar(&opts.weighted, "weighted", false, "sort state files by greatest resource count first")
+	fs.BoolVar(&opts.weighted, "w", false, "alias for --weighted")
+	fs.BoolVar(&opts.showVersion, "version", false, "print the tf-slate client version")
+	fs.BoolVar(&opts.showVersion, "v", false, "alias for --version")
+
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage of %s:\n", fs.Name())
+		fs.PrintDefaults()
+	}
+
+	return fs, opts
 }
 
 func printTable(w io.Writer, summaries []state.Summary) {
@@ -220,14 +266,14 @@ func valueOrDash(v string) string {
 	return v
 }
 
-func exitErr(err error) {
-	fmt.Fprintln(os.Stderr, err)
-	os.Exit(1)
-}
-
 func max(a, b int) int {
 	if a > b {
 		return a
 	}
 	return b
+}
+
+func writeErr(w io.Writer, err error) int {
+	fmt.Fprintln(w, err)
+	return 1
 }

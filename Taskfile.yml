@@ -49,7 +49,7 @@ tasks:
     desc: Build the tf-slate binary into dist/
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.MAIN_PACKAGE}}
+      - 'go build -ldflags "-X main.version={{default "dev" .VERSION}}" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} {{.MAIN_PACKAGE}}'
 
   clean:
     desc: Remove build artifacts
@@ -91,7 +91,7 @@ tasks:
 
   release:
     desc: Create and push a semver git tag (VERSION=x.y.z or vx.y.z, DRY_RUN=true for preview)
-    deps: [validate, build]
+    deps: [validate]
     requires:
       vars: [VERSION]
     vars:
@@ -111,9 +111,11 @@ tasks:
       - echo "Preparing release {{.NORMALIZED_VERSION}}"
       - |
         if [ "{{.DRY_RUN}}" = "true" ]; then
+          task build VERSION={{.NORMALIZED_VERSION}}
           echo "DRY_RUN: would create annotated tag {{.NORMALIZED_VERSION}}"
           echo "DRY_RUN: would push tag {{.NORMALIZED_VERSION}} to origin"
         else
+          task build VERSION={{.NORMALIZED_VERSION}}
           git tag -a "{{.NORMALIZED_VERSION}}" -m "Release {{.NORMALIZED_VERSION}}"
           git push origin "{{.NORMALIZED_VERSION}}"
         fi

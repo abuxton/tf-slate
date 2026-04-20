@@ -84,3 +84,62 @@ func TestPrintSummaryTable(t *testing.T) {
 		}
 	}
 }
+
+func TestRunShortVersionFlag(t *testing.T) {
+	oldVersion := version
+	version = "v1.2.3"
+	defer func() {
+		version = oldVersion
+	}()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := run([]string{"-v"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("run(-v) exitCode = %d, want 0", exitCode)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "v1.2.3" {
+		t.Fatalf("run(-v) stdout = %q, want %q", got, "v1.2.3")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("run(-v) stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestRunLongVersionFlag(t *testing.T) {
+	oldVersion := version
+	version = "dev-build"
+	defer func() {
+		version = oldVersion
+	}()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := run([]string{"--version"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("run(--version) exitCode = %d, want 0", exitCode)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "dev-build" {
+		t.Fatalf("run(--version) stdout = %q, want %q", got, "dev-build")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("run(--version) stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestHelpOutputIncludesVersionFlags(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := run([]string{"-h"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("run(-h) exitCode = %d, want 0", exitCode)
+	}
+	for _, want := range []string{"-version", "-v", "print the tf-slate client version"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("help output missing %q in %q", want, stderr.String())
+		}
+	}
+}
