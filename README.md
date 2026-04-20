@@ -11,6 +11,9 @@
 ## Features
 
 - Recursively scans a filesystem path for Terraform state files (Linux and Windows path compatible via Go `filepath` APIs)
+- Optional summary output that groups discovered state files into `0 resources` and `> 0 resources`
+- Optional filtering to show only state files with resources
+- Optional weighted ordering to list the most resource-heavy state files first
 - Shows:
   - file path
   - resource count (managed resources)
@@ -28,6 +31,28 @@ go run ./cmd/tf-slate -root /path/to/search
 ```
 
 Use `-non-interactive` to only print summaries.
+
+Useful flags:
+
+```bash
+# Show the zero-resource vs non-zero-resource summary table
+go run ./cmd/tf-slate -root /path/to/search -summarize
+
+# Show only state files that contain managed resources
+go run ./cmd/tf-slate -root /path/to/search -non-zero
+
+# Sort by greatest managed resource count first
+go run ./cmd/tf-slate -root /path/to/search -weighted
+
+# Combine the summary, non-zero filter, and weighted sort
+go run ./cmd/tf-slate -root /path/to/search -summarize -non-zero -weighted
+```
+
+Short aliases are also available for the new flags:
+
+- `-s` for `-summarize`
+- `-nz` for `-non-zero`
+- `-w` for `-weighted`
 
 ## Test
 
