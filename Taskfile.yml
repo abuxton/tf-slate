@@ -89,8 +89,90 @@ tasks:
     cmds:
       - npx skills experimental_install
 
-  release:
-    desc: Create and push a semver git tag (VERSION=x.y.z or vx.y.z, DRY_RUN=true for preview)
+  release:prepare:
+    desc: Cut a release branch, update CHANGELOG.md, and open a PR (VERSION=x.y.z or vx.y.z, DRY_RUN=true for preview)
+    deps: [validate]
+    requires:
+      vars: [VERSION]
+    vars:
+      NORMALIZED_VERSION:
+        sh: |
+          version="{{.VERSION}}"
+          case "$version" in
+            v*) printf "%s" "$version" ;;
+            *) printf "v%s" "$version" ;;
+          esac
+    preconditions:
+      - sh: echo "{{.NORMALIZED_VERSION}}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'
+        msg: VERSION must be a semantic version like 0.1.0 or v0.1.0
+      - sh: test -z "$(git status --porcelain)"
+        msg: Working tree must be clean before preparing a release
+      - sh: command -v gh >/dev/null 2>&1
+        msg: gh CLI is required (https://cli.github.com)
+    cmds:
+      - |
+        set -euo pipefail
+        VERSION="{{.NORMALIZED_VERSION}}"
+        BRANCH="release/${VERSION}"
+        DATE=$(date +%Y-%m-%d)
+
+        echo "==> Preparing release ${VERSION} on branch ${BRANCH}"
+
+        # Ensure we are up-to-date with origin/main
+        git fetch origin main
+
+        # Create release branch from origin/main
+        git checkout -B "${BRANCH}" origin/main
+
+        # Collect commits since the last tag (fall back to full history)
+        PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+        if [ -n "${PREV_TAG}" ]; then
+          LOG=$(git log --pretty=format:"- %s (%h)" "${PREV_TAG}..origin/main")
+        else
+          LOG=$(git log --pretty=format:"- %s (%h)" origin/main)
+        fi
+
+        # Build the new CHANGELOG entry
+        ENTRY="## [${VERSION}] - ${DATE}\n\n${LOG}\n"
+
+        # Prepend the entry into CHANGELOG.md (after the header/comment block)
+        if [ -f CHANGELOG.md ]; then
+          # Prefer inserting after the "New release entries" comment line so the
+          # entry lands at the top of the release list. Falls back to inserting
+          # before the first existing "## [" entry, and finally appends at the
+          # end of the file if neither anchor is present.
+          awk -v entry="${ENTRY}" '
+            /^<!-- New release entries/ { print; print ""; print entry; inserted=1; next }
+            /^## \[/ && !inserted { print entry; print ""; inserted=1 }
+            { print }
+            END { if (!inserted) { print ""; print entry } }
+          ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
+        else
+          printf "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).\n\n%b\n" "${ENTRY}" > CHANGELOG.md
+        fi
+
+        git add CHANGELOG.md
+        git commit -m "chore: release ${VERSION}"
+        git push --force-with-lease origin "${BRANCH}"
+
+        # Build PR body from the changelog entry
+        PR_BODY=$(printf "## Release %s\n\nThis PR was created by \`task release:prepare\`.\n\nMerging this PR will trigger the release workflow, which will:\n- Create annotated git tag \`%s\`\n- Publish a GitHub Release with generated release notes\n\n### Changelog\n\n%s" "${VERSION}" "${VERSION}" "${LOG}")
+
+        if [ "{{.DRY_RUN}}" = "true" ]; then
+          echo "DRY_RUN: would create PR from ${BRANCH} → main with title 'Release ${VERSION}'"
+          echo "--- PR body ---"
+          printf "%s\n" "${PR_BODY}"
+        else
+          gh pr create \
+            --base main \
+            --head "${BRANCH}" \
+            --title "Release ${VERSION}" \
+            --body "${PR_BODY}" \
+            --label "release"
+        fi
+
+  release:tag:
+    desc: Create and push a semver git tag directly (VERSION=x.y.z or vx.y.z, DRY_RUN=true for preview). Low-level escape hatch — prefer the release:prepare + PR workflow instead.
     deps: [validate]
     requires:
       vars: [VERSION]
@@ -108,7 +190,7 @@ tasks:
       - sh: '[ "{{.DRY_RUN}}" = "true" ] || test -z "$(git status --porcelain)"'
         msg: Working tree must be clean before creating a release tag unless DRY_RUN=true
     cmds:
-      - echo "Preparing release {{.NORMALIZED_VERSION}}"
+      - echo "Tagging release {{.NORMALIZED_VERSION}}"
       - |
         if [ "{{.DRY_RUN}}" = "true" ]; then
           task build VERSION={{.NORMALIZED_VERSION}}

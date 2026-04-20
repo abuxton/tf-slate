@@ -103,15 +103,65 @@ task mod:download
 task mod:tidy
 task mod:update
 
-# Preview a release tag without creating it
-task release VERSION=0.0.2 DRY_RUN=true
-
-# Create and push a semver release tag
-task release VERSION=0.0.2
-
 # Run the skills installer helper
 task skills:install
 ```
+
+## Release workflow
+
+Releases follow a two-step process that keeps tagging and publishing fully
+automated while still allowing a peer-review window before anything ships.
+
+### Step 1 — prepare the release (local)
+
+```bash
+# Preview what the release branch and CHANGELOG entry would look like
+task release:prepare VERSION=0.1.0 DRY_RUN=true
+
+# Create the release branch, update CHANGELOG.md, and open a GitHub PR
+task release:prepare VERSION=0.1.0
+```
+
+`release:prepare` will:
+
+1. Run `validate` (fmt + vet + tests) to confirm the tree is green.
+2. Create a `release/v0.1.0` branch from `origin/main`.
+3. Collect all commits since the last tag and prepend a new entry to `CHANGELOG.md`.
+4. Push the branch and open a pull request against `main` with the title
+   **"Release v0.1.0"** and the changelog diff in the body.
+
+### Step 2 — merge the PR (automated)
+
+Once the PR is reviewed and merged, the **Release** GitHub Actions workflow
+(`.github/workflows/release.yml`) fires automatically and:
+
+1. Extracts the version from the branch name (`release/v0.1.0` → `v0.1.0`).
+2. Builds the binary with the version string embedded.
+3. Creates an annotated git tag (`v0.1.0`) on the merge commit.
+4. Publishes a GitHub Release with auto-generated release notes and the
+   compiled binary as an asset.
+
+### Escape hatch — tag manually
+
+If you ever need to tag a release without the branch/PR flow (e.g., hotfixes):
+
+```bash
+# Preview
+task release:tag VERSION=0.1.1 DRY_RUN=true
+
+# Tag and push
+task release:tag VERSION=0.1.1
+```
+
+### One-time repository setup
+
+The following settings are required before the Release workflow can run:
+
+| Setting | Location | Value |
+|---------|----------|-------|
+| Workflow permissions | Settings → Actions → General → Workflow permissions | **Read and write permissions** |
+| `release` label | Settings → Labels → New label | Name: `release` (required for `task release:prepare`) |
+| Branch protection (recommended) | Settings → Branches → Add rule | Require CI to pass before merging `main` |
 
 ## Test
 

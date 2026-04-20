@@ -1,0 +1,75 @@
+name: Release
+
+# Fires when a PR whose head branch starts with `release/v` is merged into main.
+# The workflow extracts the version from the branch name, creates an annotated
+# tag on the merge commit, and publishes a GitHub Release with auto-generated
+# release notes.
+#
+# Required repository setup (one-time):
+#   1. Settings → Actions → General → Workflow permissions → "Read and write permissions"
+#      (or grant `contents: write` to the default GITHUB_TOKEN at the org level).
+#   2. Create a "release" label in the repository so that `task release:prepare`
+#      can apply it to the PR:  Settings → Labels → New label → "release".
+#   3. (Optional) Enable branch protection on `main` so that the release PR must
+#      pass CI checks before it can be merged.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  create-release:
+    name: Create tag and GitHub Release
+    # Only run when the PR was actually merged and its head branch is a release branch.
+    if: >
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'release/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required to push tags and create GitHub Releases
+
+    steps:
+      - name: Extract version from branch name
+        id: version
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          VERSION="${BRANCH#release/}"
+          echo "Releasing ${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          # Fetch full history so the annotated tag can be created on the exact
+          # merge commit (the default shallow clone only fetches the tip).
+          fetch-depth: 0
+          ref: main
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build release binary (embeds version string)
+        run: |
+          mkdir -p dist
+          go build \
+            -ldflags "-X main.version=${{ steps.version.outputs.version }}" \
+            -o dist/tf-slate \
+            ./cmd/tf-slate
+
+      - name: Create and push annotated tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.version }}" \
+            -m "Release ${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            --title "Release ${{ steps.version.outputs.version }}" \
+            --generate-notes \
+            dist/tf-slate
