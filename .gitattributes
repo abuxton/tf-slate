@@ -1,0 +1,31 @@
+* text=auto
+
+# Core source and docs should stay LF in this Unix-first repository.
+*.go    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+
+# Common Go module files should also stay LF when present.
+go.mod  text eol=lf
+go.sum  text eol=lf
+
+# Unix shell scripts should remain LF if added later.
+*.sh    text eol=lf
+
+# Windows-native scripts should check out with CRLF when present.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Obvious binaries and archives should not be normalized or diffed as text.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tar   binary
+*.tgz   binary
