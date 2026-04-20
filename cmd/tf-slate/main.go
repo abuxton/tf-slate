@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -16,6 +18,12 @@ import (
 func main() {
 	root := flag.String("root", ".", "root path to scan for .tfstate files")
 	nonInteractive := flag.Bool("non-interactive", false, "print state summaries without prompts")
+	summarize := flag.Bool("summarize", false, "print a summary table grouping state files by zero and non-zero resource counts")
+	flag.BoolVar(summarize, "s", false, "alias for -summarize")
+	nonZero := flag.Bool("non-zero", false, "show only state files with more than zero resources")
+	flag.BoolVar(nonZero, "nz", false, "alias for -non-zero")
+	weighted := flag.Bool("weighted", false, "sort state files by greatest resource count first")
+	flag.BoolVar(weighted, "w", false, "alias for -weighted")
 	flag.Parse()
 
 	absRoot, err := filepath.Abs(*root)
@@ -47,17 +55,33 @@ func main() {
 		return
 	}
 
-	printTable(summaries)
+	displaySummaries := summaries
+	if *nonZero {
+		displaySummaries = filterNonZeroSummaries(displaySummaries)
+	}
+	if *weighted {
+		sortSummariesWeighted(displaySummaries)
+	}
+	if len(displaySummaries) == 0 {
+		fmt.Println("No Terraform state files matched the selected filters")
+		return
+	}
+
+	printTable(os.Stdout, displaySummaries)
+	if *summarize {
+		fmt.Fprintln(os.Stdout)
+		printSummaryTable(os.Stdout, displaySummaries)
+	}
 	if *nonInteractive {
 		return
 	}
 
-	runTUI(summaries)
+	runTUI(displaySummaries)
 }
 
-func printTable(summaries []state.Summary) {
-	fmt.Println("Found Terraform state files:")
-	fmt.Println("#  Resources  Providers         Terraform  Path")
+func printTable(w io.Writer, summaries []state.Summary) {
+	fmt.Fprintln(w, "Found Terraform state files:")
+	fmt.Fprintln(w, "#  Resources  Providers         Terraform  Path")
 	for i, s := range summaries {
 		providers := "-"
 		if len(s.Providers) > 0 {
@@ -67,8 +91,59 @@ func printTable(summaries []state.Summary) {
 		if version == "" {
 			version = "-"
 		}
-		fmt.Printf("%-2d %-10d %-17s %-10s %s\n", i+1, s.ResourceCount, providers, version, s.Path)
+		fmt.Fprintf(w, "%-2d %-10d %-17s %-10s %s\n", i+1, s.ResourceCount, providers, version, s.Path)
 	}
+}
+
+func printSummaryTable(w io.Writer, summaries []state.Summary) {
+	zero, nonZero := countResourcePaths(summaries)
+	rows := [][2]string{
+		{"0 resources", strconv.Itoa(zero)},
+		{"> 0 resources", strconv.Itoa(nonZero)},
+	}
+	labelWidth := len("Path")
+	countWidth := len("Count")
+	for _, row := range rows {
+		labelWidth = max(labelWidth, len(row[0]))
+		countWidth = max(countWidth, len(row[1]))
+	}
+
+	fmt.Fprintln(w, "State resource summary:")
+	fmt.Fprintf(w, "%-*s  %-*s\n", labelWidth, "Path", countWidth, "Count")
+	fmt.Fprintf(w, "%s  %s\n", strings.Repeat("-", labelWidth), strings.Repeat("-", countWidth))
+	for _, row := range rows {
+		fmt.Fprintf(w, "%-*s  %s\n", labelWidth, row[0], row[1])
+	}
+}
+
+func countResourcePaths(summaries []state.Summary) (zero, nonZero int) {
+	for _, s := range summaries {
+		if s.ResourceCount == 0 {
+			zero++
+			continue
+		}
+		nonZero++
+	}
+	return zero, nonZero
+}
+
+func filterNonZeroSummaries(summaries []state.Summary) []state.Summary {
+	filtered := make([]state.Summary, 0, len(summaries))
+	for _, s := range summaries {
+		if s.ResourceCount > 0 {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
+}
+
+func sortSummariesWeighted(summaries []state.Summary) {
+	sort.SliceStable(summaries, func(i, j int) bool {
+		if summaries[i].ResourceCount != summaries[j].ResourceCount {
+			return summaries[i].ResourceCount > summaries[j].ResourceCount
+		}
+		return summaries[i].Path < summaries[j].Path
+	})
 }
 
 func runTUI(summaries []state.Summary) {
@@ -148,4 +223,11 @@ func valueOrDash(v string) string {
 func exitErr(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
