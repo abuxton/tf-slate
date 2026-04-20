@@ -7,6 +7,8 @@
 [![Contributors](https://img.shields.io/github/contributors/abuxton/tf-slate?style=flat-square&logo=github)](https://github.com/abuxton/tf-slate/graphs/contributors)
 
 `tf-slate` is a Go utility that discovers local Terraform state files (`*.tfstate`), summarizes each file, and provides an interactive terminal UI for follow-up operations.
+`tf` as in [Terraform](https://developer.hashicorp.com/terraform/cli/commands/state) and `slate` as in getting a ["clean slate"](https://dictionary.cambridge.org/dictionary/english/clean-slate). 
+A terarform helper utility to find and manage your terraform state files on your local file system.
 
 ## Features
 
@@ -25,7 +27,37 @@
   - `terraform destroy` (with explicit confirmation)
   - `visit`, which opens a shell in the selected state file directory and exits the interactive client
 
-## Run
+##  Installation
+
+### Brew
+
+```
+brew tap abuxton/tap
+brew install abuxton/tap/tf-slate
+tf-slate -v
+tf-slate #same as tf-slate -h
+tf-slate -v # returns version
+tf-slate . simply usage, search directory tree from $CWD.
+```
+
+### Build locally
+
+```bash
+git clone https://github.com/abuxton/tf-slate && cd tf-slate
+# task https://taskfile.dev/docs/installation
+task build
+./dist/tf-slate -v # returns `dev` on local build
+./dist/tf-slate # same as tf-slate -h
+.dist/tf-slate . minimal usage search directory tress from $CWD.
+ ```
+
+ 
+## Usage
+
+
+```bash
+tf-slate
+```
 
 ```bash
 go run ./cmd/tf-slate -root /path/to/search
