@@ -32,6 +32,13 @@ go run ./cmd/tf-slate -root /path/to/search
 
 Use `-non-interactive` to only print summaries.
 
+Print the client version:
+
+```bash
+go run ./cmd/tf-slate --version
+go run ./cmd/tf-slate -v
+```
+
 Useful flags:
 
 ```bash
@@ -70,6 +77,9 @@ task validate
 
 # Build the CLI into dist/
 task build
+
+# Build the CLI with an explicit version string embedded
+task build VERSION=v0.0.2
 
 # Manage Go modules
 task mod:download
