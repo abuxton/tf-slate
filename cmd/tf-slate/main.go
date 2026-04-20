@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/abuxton/tf-slate/internal/output"
 	"github.com/abuxton/tf-slate/internal/state"
 )
 
@@ -36,6 +37,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if opts.showVersion {
 		fmt.Fprintln(stdout, version)
 		return 0
+	}
+
+	format, err := output.ParseFormat(opts.outputFormat)
+	if err != nil {
+		return writeErr(stderr, err)
+	}
+	if !opts.nonInteractive && format != output.FormatString {
+		return writeErr(stderr, fmt.Errorf("--output %q requires --non-interactive", opts.outputFormat))
 	}
 
 	absRoot, err := filepath.Abs(opts.root)
@@ -79,13 +88,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	printTable(stdout, displaySummaries)
+	if opts.nonInteractive {
+		if err := output.Write(stdout, format, displaySummaries); err != nil {
+			return writeErr(stderr, err)
+		}
+		return 0
+	}
+
+	if err := output.Write(stdout, output.FormatString, displaySummaries); err != nil {
+		return writeErr(stderr, err)
+	}
 	if opts.summarize {
 		fmt.Fprintln(stdout)
 		printSummaryTable(stdout, displaySummaries)
-	}
-	if opts.nonInteractive {
-		return 0
 	}
 
 	runTUI(displaySummaries)
@@ -95,6 +110,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 type options struct {
 	root           string
 	nonInteractive bool
+	outputFormat   string
 	summarize      bool
 	nonZero        bool
 	weighted       bool
@@ -117,6 +133,9 @@ func newFlagSet(stderr io.Writer) (*flag.FlagSet, *options) {
 
 	fs.StringVar(&opts.root, "root", ".", "root path to scan for .tfstate files")
 	fs.BoolVar(&opts.nonInteractive, "non-interactive", false, "print state summaries without prompts")
+	fs.BoolVar(&opts.nonInteractive, "ni", false, "alias for --non-interactive")
+	fs.StringVar(&opts.outputFormat, "output", string(output.FormatString), "non-interactive output format: string, json, yaml, or csv")
+	fs.StringVar(&opts.outputFormat, "o", string(output.FormatString), "alias for --output")
 	fs.BoolVar(&opts.summarize, "summarize", false, "print a summary table grouping state files by zero and non-zero resource counts")
 	fs.BoolVar(&opts.summarize, "s", false, "alias for --summarize")
 	fs.BoolVar(&opts.nonZero, "non-zero", false, "show only state files with more than zero resources")
@@ -134,29 +153,13 @@ func newFlagSet(stderr io.Writer) (*flag.FlagSet, *options) {
 	return fs, opts
 }
 
-func printTable(w io.Writer, summaries []state.Summary) {
-	fmt.Fprintln(w, "Found Terraform state files:")
-	fmt.Fprintln(w, "#  Resources  Providers         Terraform  Path")
-	for i, s := range summaries {
-		providers := "-"
-		if len(s.Providers) > 0 {
-			providers = strings.Join(s.Providers, ",")
-		}
-		version := s.TerraformVersion
-		if version == "" {
-			version = "-"
-		}
-		fmt.Fprintf(w, "%-2d %-10d %-17s %-10s %s\n", i+1, s.ResourceCount, providers, version, s.Path)
-	}
-}
-
 func printSummaryTable(w io.Writer, summaries []state.Summary) {
 	zero, nonZero := countResourcePaths(summaries)
 	rows := [][2]string{
 		{"0 resources", strconv.Itoa(zero)},
 		{"> 0 resources", strconv.Itoa(nonZero)},
 	}
-	labelWidth := len("Path")
+	labelWidth := len("Bucket")
 	countWidth := len("Count")
 	for _, row := range rows {
 		labelWidth = max(labelWidth, len(row[0]))
@@ -164,7 +167,7 @@ func printSummaryTable(w io.Writer, summaries []state.Summary) {
 	}
 
 	fmt.Fprintln(w, "State resource summary:")
-	fmt.Fprintf(w, "%-*s  %-*s\n", labelWidth, "Path", countWidth, "Count")
+	fmt.Fprintf(w, "%-*s  %-*s\n", labelWidth, "Bucket", countWidth, "Count")
 	fmt.Fprintf(w, "%s  %s\n", strings.Repeat("-", labelWidth), strings.Repeat("-", countWidth))
 	for _, row := range rows {
 		fmt.Fprintf(w, "%-*s  %s\n", labelWidth, row[0], row[1])
