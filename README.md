@@ -30,7 +30,7 @@
 go run ./cmd/tf-slate -root /path/to/search
 ```
 
-Use `-non-interactive` to only print summaries.
+Use `-non-interactive` or `--ni` to print summaries without prompts.
 
 Print the client version:
 
@@ -53,13 +53,24 @@ go run ./cmd/tf-slate -root /path/to/search -weighted
 
 # Combine the summary, non-zero filter, and weighted sort
 go run ./cmd/tf-slate -root /path/to/search -summarize -non-zero -weighted
+
+# Emit JSON in non-interactive mode
+go run ./cmd/tf-slate --ni --output json -root /path/to/search
+
+# Emit YAML or CSV in non-interactive mode
+go run ./cmd/tf-slate --ni -o yaml -root /path/to/search
+go run ./cmd/tf-slate --ni -o csv -root /path/to/search
 ```
 
 Short aliases are also available for the new flags:
 
+- `--ni` for `-non-interactive`
+- `-o` for `-output`
 - `-s` for `-summarize`
 - `-nz` for `-non-zero`
 - `-w` for `-weighted`
+
+Supported non-interactive output formats are `string` (default), `json`, `yaml`, and `csv`. Structured outputs do not include the footer summary table.
 
 ## Taskfile automation
 
