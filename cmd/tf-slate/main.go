@@ -189,7 +189,6 @@ func hasRootFlag(args []string) bool {
 	return false
 }
 
-
 func printSummaryTable(w io.Writer, summaries []state.Summary) {
 	zero, nonZero := countResourcePaths(summaries)
 	rows := [][2]string{

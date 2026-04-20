@@ -201,7 +201,6 @@ func TestRunUnexpectedExtraArguments(t *testing.T) {
 	}
 }
 
-
 func TestHelpOutputIncludesOutputFlags(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
