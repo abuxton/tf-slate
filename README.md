@@ -20,9 +20,10 @@
   - provider/platform names
   - terraform version + serial metadata
 - Interactive TUI prompts that suggest and can run:
-  - `terraform state list`
+  - `terraform state list` with a nested picker so you can inspect a listed resource or go `back`
   - `terraform state show`
   - `terraform destroy` (with explicit confirmation)
+  - `visit`, which opens a shell in the selected state file directory and exits the interactive client
 
 ## Run
 
@@ -31,7 +32,7 @@ go run ./cmd/tf-slate -root /path/to/search
 go run ./cmd/tf-slate /path/to/search
 ```
 
-Use `-non-interactive` to only print summaries.
+Use `-non-interactive` or `--ni` to print summaries without prompts.
 
 Running `tf-slate` with no arguments now prints the CLI help, and a single positional path is treated the same as `-root /path`.
 
@@ -56,13 +57,26 @@ go run ./cmd/tf-slate -root /path/to/search -weighted
 
 # Combine the summary, non-zero filter, and weighted sort
 go run ./cmd/tf-slate -root /path/to/search -summarize -non-zero -weighted
+
+# Emit JSON in non-interactive mode
+go run ./cmd/tf-slate --ni --output json -root /path/to/search
+
+# Emit YAML or CSV in non-interactive mode
+go run ./cmd/tf-slate --ni -o yaml -root /path/to/search
+go run ./cmd/tf-slate --ni -o csv -root /path/to/search
 ```
+
+In interactive mode, selecting `list` now shows the resources in the chosen state file and lets you either inspect one directly or go `back` to the state file list. Selecting `visit` opens a shell in the selected state file directory so you can work there immediately.
 
 Short aliases are also available for the new flags:
 
+- `--ni` for `-non-interactive`
+- `-o` for `-output`
 - `-s` for `-summarize`
 - `-nz` for `-non-zero`
 - `-w` for `-weighted`
+
+Supported non-interactive output formats are `string` (default), `json`, `yaml`, and `csv`. Structured outputs do not include the footer summary table.
 
 ## Taskfile automation
 

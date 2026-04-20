@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/abuxton/tf-slate/internal/output"
 	"github.com/abuxton/tf-slate/internal/state"
 )
 
@@ -44,6 +46,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if err := applyPositionalRoot(args, fs, opts); err != nil {
 		return writeErr(stderr, err)
+	}
+
+	format, err := output.ParseFormat(opts.outputFormat)
+	if err != nil {
+		return writeErr(stderr, err)
+	}
+	if !opts.nonInteractive && format != output.FormatString {
+		return writeErr(stderr, fmt.Errorf("--output %q requires --non-interactive", opts.outputFormat))
 	}
 
 	absRoot, err := filepath.Abs(opts.root)
@@ -87,13 +97,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	printTable(stdout, displaySummaries)
+	if opts.nonInteractive {
+		if err := output.Write(stdout, format, displaySummaries); err != nil {
+			return writeErr(stderr, err)
+		}
+		return 0
+	}
+
+	if err := output.Write(stdout, output.FormatString, displaySummaries); err != nil {
+		return writeErr(stderr, err)
+	}
 	if opts.summarize {
 		fmt.Fprintln(stdout)
 		printSummaryTable(stdout, displaySummaries)
-	}
-	if opts.nonInteractive {
-		return 0
 	}
 
 	runTUI(displaySummaries)
@@ -103,10 +119,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 type options struct {
 	root           string
 	nonInteractive bool
+	outputFormat   string
 	summarize      bool
 	nonZero        bool
 	weighted       bool
 	showVersion    bool
+}
+
+type interactiveSession struct {
+	reader           *bufio.Reader
+	out              io.Writer
+	runTerraform     func(args ...string)
+	captureTerraform func(args ...string) (string, error)
+	visitDir         func(string) error
 }
 
 func newFlagSet(stderr io.Writer) (*flag.FlagSet, *options) {
@@ -117,6 +142,9 @@ func newFlagSet(stderr io.Writer) (*flag.FlagSet, *options) {
 
 	fs.StringVar(&opts.root, "root", ".", "root path to scan for .tfstate files")
 	fs.BoolVar(&opts.nonInteractive, "non-interactive", false, "print state summaries without prompts")
+	fs.BoolVar(&opts.nonInteractive, "ni", false, "alias for --non-interactive")
+	fs.StringVar(&opts.outputFormat, "output", string(output.FormatString), "non-interactive output format: string, json, yaml, or csv")
+	fs.StringVar(&opts.outputFormat, "o", string(output.FormatString), "alias for --output")
 	fs.BoolVar(&opts.summarize, "summarize", false, "print a summary table grouping state files by zero and non-zero resource counts")
 	fs.BoolVar(&opts.summarize, "s", false, "alias for --summarize")
 	fs.BoolVar(&opts.nonZero, "non-zero", false, "show only state files with more than zero resources")
@@ -161,21 +189,6 @@ func hasRootFlag(args []string) bool {
 	return false
 }
 
-func printTable(w io.Writer, summaries []state.Summary) {
-	fmt.Fprintln(w, "Found Terraform state files:")
-	fmt.Fprintln(w, "#  Resources  Providers         Terraform  Path")
-	for i, s := range summaries {
-		providers := "-"
-		if len(s.Providers) > 0 {
-			providers = strings.Join(s.Providers, ",")
-		}
-		version := s.TerraformVersion
-		if version == "" {
-			version = "-"
-		}
-		fmt.Fprintf(w, "%-2d %-10d %-17s %-10s %s\n", i+1, s.ResourceCount, providers, version, s.Path)
-	}
-}
 
 func printSummaryTable(w io.Writer, summaries []state.Summary) {
 	zero, nonZero := countResourcePaths(summaries)
@@ -183,7 +196,7 @@ func printSummaryTable(w io.Writer, summaries []state.Summary) {
 		{"0 resources", strconv.Itoa(zero)},
 		{"> 0 resources", strconv.Itoa(nonZero)},
 	}
-	labelWidth := len("Path")
+	labelWidth := len("Bucket")
 	countWidth := len("Count")
 	for _, row := range rows {
 		labelWidth = max(labelWidth, len(row[0]))
@@ -191,7 +204,7 @@ func printSummaryTable(w io.Writer, summaries []state.Summary) {
 	}
 
 	fmt.Fprintln(w, "State resource summary:")
-	fmt.Fprintf(w, "%-*s  %-*s\n", labelWidth, "Path", countWidth, "Count")
+	fmt.Fprintf(w, "%-*s  %-*s\n", labelWidth, "Bucket", countWidth, "Count")
 	fmt.Fprintf(w, "%s  %s\n", strings.Repeat("-", labelWidth), strings.Repeat("-", countWidth))
 	for _, row := range rows {
 		fmt.Fprintf(w, "%-*s  %s\n", labelWidth, row[0], row[1])
@@ -229,10 +242,20 @@ func sortSummariesWeighted(summaries []state.Summary) {
 }
 
 func runTUI(summaries []state.Summary) {
-	reader := bufio.NewReader(os.Stdin)
+	session := interactiveSession{
+		reader:           bufio.NewReader(os.Stdin),
+		out:              os.Stdout,
+		runTerraform:     runTerraform,
+		captureTerraform: captureTerraform,
+		visitDir:         openShellInDir,
+	}
+	runTUIWithSession(session, summaries)
+}
+
+func runTUIWithSession(session interactiveSession, summaries []state.Summary) {
 	for {
-		fmt.Print("\nSelect a state file number to review (or q to quit): ")
-		input, _ := reader.ReadString('\n')
+		fmt.Fprint(session.out, "\nSelect a state file number to review (or q to quit): ")
+		input, _ := session.reader.ReadString('\n')
 		input = strings.TrimSpace(input)
 		if strings.EqualFold(input, "q") {
 			return
@@ -240,45 +263,117 @@ func runTUI(summaries []state.Summary) {
 
 		idx, err := strconv.Atoi(input)
 		if err != nil || idx < 1 || idx > len(summaries) {
-			fmt.Println("Invalid selection")
+			fmt.Fprintln(session.out, "Invalid selection")
 			continue
 		}
 
-		s := summaries[idx-1]
-		fmt.Printf("\nState: %s\n", s.Path)
-		fmt.Printf("Resources: %d | Providers: %s | Terraform: %s | Serial: %d\n", s.ResourceCount, strings.Join(s.Providers, ","), valueOrDash(s.TerraformVersion), s.Serial)
-		fmt.Println("Suggested follow-up commands:")
-		fmt.Printf("  list   -> terraform state list -state=%q\n", s.Path)
-		fmt.Printf("  show   -> terraform state show -state=%q <resource-address>\n", s.Path)
-		fmt.Printf("  destroy-> terraform destroy -state=%q\n", s.Path)
-		fmt.Print("Run a suggested command now? [list/show/destroy/n]: ")
-		action, _ := reader.ReadString('\n')
+		if runStateActions(session, summaries[idx-1]) {
+			return
+		}
+	}
+}
+
+func runStateActions(session interactiveSession, summary state.Summary) bool {
+	for {
+		fmt.Fprintf(session.out, "\nState: %s\n", summary.Path)
+		fmt.Fprintf(session.out, "Resources: %d | Providers: %s | Terraform: %s | Serial: %d\n", summary.ResourceCount, strings.Join(summary.Providers, ","), valueOrDash(summary.TerraformVersion), summary.Serial)
+		fmt.Fprintln(session.out, "Suggested follow-up commands:")
+		fmt.Fprintf(session.out, "  list   -> terraform state list -state=%q\n", summary.Path)
+		fmt.Fprintf(session.out, "  show   -> terraform state show -state=%q <resource-address>\n", summary.Path)
+		fmt.Fprintf(session.out, "  destroy-> terraform destroy -state=%q\n", summary.Path)
+		fmt.Fprintf(session.out, "  visit  -> open a shell in %q and exit tf-slate\n", filepath.Dir(summary.Path))
+		fmt.Fprint(session.out, "Run a suggested command now? [list/show/destroy/visit/back/n]: ")
+
+		action, _ := session.reader.ReadString('\n')
 		action = strings.TrimSpace(strings.ToLower(action))
 
 		switch action {
 		case "list":
-			runTerraform("state", "list", "-state="+s.Path)
+			handleListAction(session, summary.Path)
 		case "show":
-			fmt.Print("Enter resource address: ")
-			addr, _ := reader.ReadString('\n')
+			fmt.Fprint(session.out, "Enter resource address: ")
+			addr, _ := session.reader.ReadString('\n')
 			addr = strings.TrimSpace(addr)
 			if addr == "" {
-				fmt.Println("No resource address entered")
+				fmt.Fprintln(session.out, "No resource address entered")
 				continue
 			}
-			runTerraform("state", "show", "-state="+s.Path, addr)
+			session.runTerraform("state", "show", "-state="+summary.Path, addr)
 		case "destroy":
-			fmt.Print("Type DESTROY to confirm: ")
-			confirm, _ := reader.ReadString('\n')
+			fmt.Fprint(session.out, "Type DESTROY to confirm: ")
+			confirm, _ := session.reader.ReadString('\n')
 			if strings.TrimSpace(confirm) != "DESTROY" {
-				fmt.Println("Destroy cancelled")
+				fmt.Fprintln(session.out, "Destroy cancelled")
 				continue
 			}
-			runTerraform("destroy", "-state="+s.Path)
+			session.runTerraform("destroy", "-state="+summary.Path)
+		case "visit":
+			fmt.Fprintf(session.out, "Opening shell in %s\n", filepath.Dir(summary.Path))
+			if err := session.visitDir(filepath.Dir(summary.Path)); err != nil {
+				fmt.Fprintf(session.out, "visit failed: %v\n", err)
+				continue
+			}
+			return true
+		case "back", "b", "n":
+			fmt.Fprintln(session.out, "Returning to the state file list")
+			return false
 		default:
-			fmt.Println("No command executed")
+			fmt.Fprintln(session.out, "No command executed")
 		}
 	}
+}
+
+func handleListAction(session interactiveSession, statePath string) {
+	output, err := session.captureTerraform("state", "list", "-state="+statePath)
+	if err != nil {
+		fmt.Fprintf(session.out, "terraform state list failed: %v\n", err)
+		if strings.TrimSpace(output) != "" {
+			fmt.Fprintln(session.out, output)
+		}
+		return
+	}
+
+	resources := parseTerraformListOutput(output)
+	if len(resources) == 0 {
+		fmt.Fprintln(session.out, "No resources found in the selected state file")
+		return
+	}
+
+	for {
+		fmt.Fprintln(session.out, "State resources:")
+		for i, resource := range resources {
+			fmt.Fprintf(session.out, "  %d. %s\n", i+1, resource)
+		}
+		fmt.Fprint(session.out, "Choose a resource to inspect or type back: ")
+
+		input, _ := session.reader.ReadString('\n')
+		input = strings.TrimSpace(strings.ToLower(input))
+		switch input {
+		case "back", "b":
+			return
+		}
+
+		idx, err := strconv.Atoi(input)
+		if err != nil || idx < 1 || idx > len(resources) {
+			fmt.Fprintln(session.out, "Invalid selection")
+			continue
+		}
+
+		session.runTerraform("state", "show", "-state="+statePath, resources[idx-1])
+	}
+}
+
+func parseTerraformListOutput(output string) []string {
+	lines := strings.Split(output, "\n")
+	resources := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		resources = append(resources, line)
+	}
+	return resources
 }
 
 func runTerraform(args ...string) {
@@ -293,6 +388,39 @@ func runTerraform(args ...string) {
 	if err := cmd.Run(); err != nil {
 		fmt.Printf("terraform command failed: %v\n", err)
 	}
+}
+
+func captureTerraform(args ...string) (string, error) {
+	if _, err := exec.LookPath("terraform"); err != nil {
+		return "", errors.New("terraform executable not found")
+	}
+	cmd := exec.Command("terraform", args...)
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func openShellInDir(dir string) error {
+	shell, args := shellCommand()
+	cmd := exec.Command(shell, args...)
+	cmd.Dir = dir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
+}
+
+func shellCommand() (string, []string) {
+	if runtime.GOOS == "windows" {
+		if shell := strings.TrimSpace(os.Getenv("COMSPEC")); shell != "" {
+			return shell, []string{"/K"}
+		}
+		return "cmd.exe", []string{"/K"}
+	}
+
+	if shell := strings.TrimSpace(os.Getenv("SHELL")); shell != "" {
+		return shell, []string{"-i"}
+	}
+	return "/bin/sh", []string{"-i"}
 }
 
 func valueOrDash(v string) string {
