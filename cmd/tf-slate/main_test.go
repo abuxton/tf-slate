@@ -73,8 +73,9 @@ func TestPrintSummaryTable(t *testing.T) {
 	output := buf.String()
 	for _, want := range []string{
 		"State resource summary:",
-		"Path         Count",
-		"-------------  -----",
+		"Path",
+		"Count",
+		"-----",
 		"0 resources    1",
 		"> 0 resources  1",
 	} {

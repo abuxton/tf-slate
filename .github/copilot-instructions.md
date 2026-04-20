@@ -24,14 +24,26 @@ The repository is small and intentionally simple:
 ## Build and test commands
 
 ```bash
+# Show available automation tasks
+task
+
+# Run the local Task-based development loop
+task dev
+
+# Run the local CI-style checks
+task ci
+
+# Build the executable
+task build
+
+# Run format, vet, and tests
+task validate
+
 # Run the CLI against a directory of local Terraform state files
 go run ./cmd/tf-slate -root /path/to/search
 
 # Print summaries only, without interactive prompts
 go run ./cmd/tf-slate -root /path/to/search -non-interactive
-
-# Build the executable
-go build ./cmd/tf-slate
 
 # Run the full test suite
 go test ./...
@@ -40,7 +52,7 @@ go test ./...
 go test ./internal/state -run TestSummarizeStateFile
 ```
 
-There is no repository-specific lint command checked in today.
+Prefer `task` commands for the standard development workflow now that the repository has a `Taskfile.yml`.
 
 ## Architecture and behavioral boundaries
 
