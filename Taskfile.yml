@@ -135,12 +135,17 @@ tasks:
         # Build the new CHANGELOG entry
         ENTRY="## [${VERSION}] - ${DATE}\n\n${LOG}\n"
 
-        # Prepend the entry into CHANGELOG.md (after the header block)
+        # Prepend the entry into CHANGELOG.md (after the header/comment block)
         if [ -f CHANGELOG.md ]; then
-          # Insert after the first blank line that follows the title/header
+          # Prefer inserting after the "New release entries" comment line so the
+          # entry lands at the top of the release list. Falls back to inserting
+          # before the first existing "## [" entry, and finally appends at the
+          # end of the file if neither anchor is present.
           awk -v entry="${ENTRY}" '
+            /^<!-- New release entries/ { print; print ""; print entry; inserted=1; next }
             /^## \[/ && !inserted { print entry; print ""; inserted=1 }
             { print }
+            END { if (!inserted) { print ""; print entry } }
           ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
         else
           printf "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).\n\n%b\n" "${ENTRY}" > CHANGELOG.md
