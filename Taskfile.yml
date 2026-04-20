@@ -150,18 +150,27 @@ tasks:
           # Create release branch from origin/main.
           git checkout -B "${BRANCH}" origin/main
 
+          entry_tmp=$(mktemp CHANGELOG.entry.tmp.XXXXXX)
           changelog_tmp=$(mktemp CHANGELOG.md.tmp.XXXXXX)
-          trap 'rm -f "${changelog_tmp}"' EXIT
+          trap 'rm -f "${entry_tmp}" "${changelog_tmp}"' EXIT
+
+          printf "%b\n" "${ENTRY}" > "${entry_tmp}"
 
           # Prepend the entry into CHANGELOG.md (after the header/comment block).
           # Falls back to inserting before the first existing release entry or
           # appending to the end of the file when no anchor exists.
           if [ -f CHANGELOG.md ]; then
-            awk -v entry="${ENTRY}" '
-              /^<!-- New release entries/ { print; print ""; print entry; inserted=1; next }
-              /^## \[/ && !inserted { print entry; print ""; inserted=1 }
+            awk -v entry_file="${entry_tmp}" '
+              function print_entry() {
+                while ((getline line < entry_file) > 0) {
+                  print line
+                }
+                close(entry_file)
+              }
+              /^<!-- New release entries/ { print; print ""; print_entry(); inserted=1; next }
+              /^## \[/ && !inserted { print_entry(); print ""; inserted=1 }
               { print }
-              END { if (!inserted) { print ""; print entry } }
+              END { if (!inserted) { print ""; print_entry() } }
             ' CHANGELOG.md > "${changelog_tmp}"
           else
             printf "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).\n\n%b\n" "${ENTRY}" > "${changelog_tmp}"
