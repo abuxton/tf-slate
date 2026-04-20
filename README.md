@@ -130,6 +130,11 @@ task release:prepare VERSION=0.1.0
 4. Push the branch and open a pull request against `main` with the title
    **"Release v0.1.0"** and the changelog diff in the body.
 
+With `DRY_RUN=true`, `release:prepare` now performs the validation and preview
+steps only: it fetches `origin/main`, prints the generated changelog entry and
+PR body, and does **not** modify the current branch, `CHANGELOG.md`, commits,
+or the remote.
+
 ### Step 2 — merge the PR (automated)
 
 Once the PR is reviewed and merged, the **Release** GitHub Actions workflow

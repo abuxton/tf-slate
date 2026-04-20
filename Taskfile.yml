@@ -105,9 +105,9 @@ tasks:
     preconditions:
       - sh: echo "{{.NORMALIZED_VERSION}}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'
         msg: VERSION must be a semantic version like 0.1.0 or v0.1.0
-      - sh: test -z "$(git status --porcelain)"
+      - sh: '[ "{{.DRY_RUN}}" = "true" ] || test -z "$(git status --porcelain)"'
         msg: Working tree must be clean before preparing a release
-      - sh: command -v gh >/dev/null 2>&1
+      - sh: '[ "{{.DRY_RUN}}" = "true" ] || command -v gh >/dev/null 2>&1'
         msg: gh CLI is required (https://cli.github.com)
     cmds:
       - |
@@ -121,9 +121,6 @@ tasks:
         # Ensure we are up-to-date with origin/main
         git fetch origin main
 
-        # Create release branch from origin/main
-        git checkout -B "${BRANCH}" origin/main
-
         # Collect commits since the last tag (fall back to full history)
         PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
         if [ -n "${PREV_TAG}" ]; then
@@ -132,37 +129,51 @@ tasks:
           LOG=$(git log --pretty=format:"- %s (%h)" origin/main)
         fi
 
-        # Build the new CHANGELOG entry
-        ENTRY="## [${VERSION}] - ${DATE}\n\n${LOG}\n"
-
-        # Prepend the entry into CHANGELOG.md (after the header/comment block)
-        if [ -f CHANGELOG.md ]; then
-          # Prefer inserting after the "New release entries" comment line so the
-          # entry lands at the top of the release list. Falls back to inserting
-          # before the first existing "## [" entry, and finally appends at the
-          # end of the file if neither anchor is present.
-          awk -v entry="${ENTRY}" '
-            /^<!-- New release entries/ { print; print ""; print entry; inserted=1; next }
-            /^## \[/ && !inserted { print entry; print ""; inserted=1 }
-            { print }
-            END { if (!inserted) { print ""; print entry } }
-          ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
-        else
-          printf "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).\n\n%b\n" "${ENTRY}" > CHANGELOG.md
+        if [ -z "${LOG}" ]; then
+          LOG="- No commits since the previous release"
         fi
 
-        git add CHANGELOG.md
-        git commit -m "chore: release ${VERSION}"
-        git push --force-with-lease origin "${BRANCH}"
+        # Build the new CHANGELOG entry
+        ENTRY="## [${VERSION}] - ${DATE}\n\n${LOG}\n"
 
         # Build PR body from the changelog entry
         PR_BODY=$(printf "## Release %s\n\nThis PR was created by \`task release:prepare\`.\n\nMerging this PR will trigger the release workflow, which will:\n- Create annotated git tag \`%s\`\n- Publish a GitHub Release with generated release notes\n\n### Changelog\n\n%s" "${VERSION}" "${VERSION}" "${LOG}")
 
         if [ "{{.DRY_RUN}}" = "true" ]; then
+          echo "DRY_RUN: no local or remote changes will be made"
+          echo "--- changelog entry preview ---"
+          printf "%b\n" "${ENTRY}"
           echo "DRY_RUN: would create PR from ${BRANCH} → main with title 'Release ${VERSION}'"
           echo "--- PR body ---"
           printf "%s\n" "${PR_BODY}"
         else
+          # Create release branch from origin/main.
+          git checkout -B "${BRANCH}" origin/main
+
+          changelog_tmp=$(mktemp CHANGELOG.md.tmp.XXXXXX)
+          trap 'rm -f "${changelog_tmp}"' EXIT
+
+          # Prepend the entry into CHANGELOG.md (after the header/comment block).
+          # Falls back to inserting before the first existing release entry or
+          # appending to the end of the file when no anchor exists.
+          if [ -f CHANGELOG.md ]; then
+            awk -v entry="${ENTRY}" '
+              /^<!-- New release entries/ { print; print ""; print entry; inserted=1; next }
+              /^## \[/ && !inserted { print entry; print ""; inserted=1 }
+              { print }
+              END { if (!inserted) { print ""; print entry } }
+            ' CHANGELOG.md > "${changelog_tmp}"
+          else
+            printf "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\nThe format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).\n\n%b\n" "${ENTRY}" > "${changelog_tmp}"
+          fi
+
+          mv "${changelog_tmp}" CHANGELOG.md
+          trap - EXIT
+
+          git add CHANGELOG.md
+          git commit -m "chore: release ${VERSION}" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+          git push --force-with-lease origin "${BRANCH}"
+
           gh pr create \
             --base main \
             --head "${BRANCH}" \
