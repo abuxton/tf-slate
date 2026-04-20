@@ -177,7 +177,6 @@ tasks:
           fi
 
           mv "${changelog_tmp}" CHANGELOG.md
-          trap - EXIT
 
           git add CHANGELOG.md
           git commit -m "chore: release ${VERSION}" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
