@@ -26,6 +26,12 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	fs, opts := newFlagSet(stderr)
+	if len(args) == 0 {
+		fs.SetOutput(stdout)
+		fs.Usage()
+		return 0
+	}
+
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -37,6 +43,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if opts.showVersion {
 		fmt.Fprintln(stdout, version)
 		return 0
+	}
+	if err := applyPositionalRoot(args, fs, opts); err != nil {
+		return writeErr(stderr, err)
 	}
 
 	format, err := output.ParseFormat(opts.outputFormat)
@@ -152,6 +161,34 @@ func newFlagSet(stderr io.Writer) (*flag.FlagSet, *options) {
 
 	return fs, opts
 }
+
+func applyPositionalRoot(args []string, fs *flag.FlagSet, opts *options) error {
+	switch fs.NArg() {
+	case 0:
+		return nil
+	case 1:
+		if hasRootFlag(args) {
+			return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+		}
+		opts.root = fs.Arg(0)
+		return nil
+	default:
+		return fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), ", "))
+	}
+}
+
+func hasRootFlag(args []string) bool {
+	for _, arg := range args {
+		switch {
+		case arg == "-root", arg == "--root":
+			return true
+		case strings.HasPrefix(arg, "-root="), strings.HasPrefix(arg, "--root="):
+			return true
+		}
+	}
+	return false
+}
+
 
 func printSummaryTable(w io.Writer, summaries []state.Summary) {
 	zero, nonZero := countResourcePaths(summaries)
