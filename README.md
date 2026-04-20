@@ -28,9 +28,12 @@
 
 ```bash
 go run ./cmd/tf-slate -root /path/to/search
+go run ./cmd/tf-slate /path/to/search
 ```
 
 Use `-non-interactive` to only print summaries.
+
+Running `tf-slate` with no arguments now prints the CLI help, and a single positional path is treated the same as `-root /path`.
 
 Print the client version:
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -141,5 +142,58 @@ func TestHelpOutputIncludesVersionFlags(t *testing.T) {
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("help output missing %q in %q", want, stderr.String())
 		}
+	}
+}
+
+func TestRunNoArgsShowsHelp(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := run(nil, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("run(nil) exitCode = %d, want 0", exitCode)
+	}
+	if !strings.Contains(stdout.String(), "Usage of tf-slate:") {
+		t.Fatalf("run(nil) stdout = %q, want usage output", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("run(nil) stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestRunSinglePositionalPathUsesRoot(t *testing.T) {
+	dir := t.TempDir()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := run([]string{dir}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("run(%q) exitCode = %d, want 0", dir, exitCode)
+	}
+
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("filepath.Abs() error = %v", err)
+	}
+	want := "No Terraform state files found under " + absDir
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("run(%q) stdout = %q, want %q", dir, stdout.String(), want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("run(%q) stderr = %q, want empty", dir, stderr.String())
+	}
+}
+
+func TestRunUnexpectedExtraArguments(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	exitCode := run([]string{"one", "two"}, &stdout, &stderr)
+	if exitCode != 1 {
+		t.Fatalf("run(unexpected args) exitCode = %d, want 1", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "unexpected arguments: one, two") {
+		t.Fatalf("run(unexpected args) stderr = %q, want unexpected arguments error", stderr.String())
 	}
 }
