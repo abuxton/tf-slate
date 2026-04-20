@@ -115,3 +115,4 @@ terraform.rc
 .ionide
 
 # End of https://www.toptal.com/developers/gitignore/api/clean,git,go,powershell,terraform,visualstudiocode
+tf-slate
