@@ -341,11 +341,16 @@ func TestReadTTYMenuEventFromReader(t *testing.T) {
 			in:   "\x7f",
 			want: menuEvent{backspace: true},
 		},
+		{
+			name: "lone ESC treated as back",
+			in:   "\x1b",
+			want: menuEvent{text: "back"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := readTTYMenuEventFromReader(strings.NewReader(tt.in))
+			got, ok := readTTYMenuEventFromReader(bufio.NewReader(strings.NewReader(tt.in)))
 			if !ok {
 				t.Fatalf("readTTYMenuEventFromReader() ok = false, want true")
 			}
@@ -379,7 +384,6 @@ func TestRunTUIWithSessionUsesCompactStatePrompt(t *testing.T) {
 		"/tmp/second.tfstate",
 		"Selection [1/2]:",
 		"Use \u2191/\u2193 then Enter, or type a number or q.",
-		"\x1b[",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("runTUIWithSession() output missing %q in %q", want, got)
@@ -425,7 +429,6 @@ func TestHandleListActionArrowSelectionShowsResourceAndLoops(t *testing.T) {
 		"State resources",
 		"What next?",
 		"List another resource",
-		"\x1b[",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("handleListAction() output missing %q in %q", want, got)

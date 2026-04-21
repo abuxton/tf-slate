@@ -29,6 +29,36 @@ const (
 	ansiYellow   = "\x1b[33m"
 )
 
+// colorSet holds ANSI escape codes used for terminal rendering.
+// All fields are empty strings when color output is disabled.
+type colorSet struct {
+	reset, boldCyan, cyan, green, yellow string
+}
+
+var fullColors = colorSet{
+	reset:    ansiReset,
+	boldCyan: ansiBoldCyan,
+	cyan:     ansiCyan,
+	green:    ansiGreen,
+	yellow:   ansiYellow,
+}
+
+// colorsFor returns a colorSet with ANSI codes enabled only when w is a
+// terminal and the NO_COLOR environment variable is not set.
+func colorsFor(w io.Writer) colorSet {
+	if os.Getenv("NO_COLOR") != "" {
+		return colorSet{}
+	}
+	f, ok := w.(*os.File)
+	if !ok {
+		return colorSet{}
+	}
+	if term.IsTerminal(int(f.Fd())) {
+		return fullColors
+	}
+	return colorSet{}
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -556,36 +586,38 @@ func promptMenu(session interactiveSession, title, description string, options [
 }
 
 func renderStatePrompt(w io.Writer, summaries []state.Summary, selected int, typed string) {
+	c := colorsFor(w)
 	summary := summaries[selected]
-	fmt.Fprintf(w, "\n%sSelect a state file%s\n", ansiBoldCyan, ansiReset)
-	fmt.Fprintf(w, "%sReview state files discovered in the scan.%s\n", ansiCyan, ansiReset)
-	fmt.Fprintf(w, "%sUse ↑/↓ then Enter, or type a number or q.%s\n", ansiYellow, ansiReset)
-	fmt.Fprintf(w, "%sCurrent [%d/%d]%s\n", ansiGreen, selected+1, len(summaries), ansiReset)
-	fmt.Fprintf(w, "%s%s%s\n", ansiCyan, summary.Path, ansiReset)
-	fmt.Fprintf(w, "%s%d resources | providers: %s | terraform: %s%s\n", ansiCyan, summary.ResourceCount, valueOrDash(strings.Join(summary.Providers, ",")), valueOrDash(summary.TerraformVersion), ansiReset)
-	fmt.Fprintf(w, "%sSelection [%d/%d]:%s %s\n", ansiYellow, selected+1, len(summaries), ansiReset, typed)
+	fmt.Fprintf(w, "\n%sSelect a state file%s\n", c.boldCyan, c.reset)
+	fmt.Fprintf(w, "%sReview state files discovered in the scan.%s\n", c.cyan, c.reset)
+	fmt.Fprintf(w, "%sUse ↑/↓ then Enter, or type a number or q.%s\n", c.yellow, c.reset)
+	fmt.Fprintf(w, "%sCurrent [%d/%d]%s\n", c.green, selected+1, len(summaries), c.reset)
+	fmt.Fprintf(w, "%s%s%s\n", c.cyan, summary.Path, c.reset)
+	fmt.Fprintf(w, "%s%d resources | providers: %s | terraform: %s%s\n", c.cyan, summary.ResourceCount, valueOrDash(strings.Join(summary.Providers, ",")), valueOrDash(summary.TerraformVersion), c.reset)
+	fmt.Fprintf(w, "%sSelection [%d/%d]:%s %s\n", c.yellow, selected+1, len(summaries), c.reset, typed)
 }
 
 func renderMenu(w io.Writer, title, description string, options []menuOption, selected int, typed string) {
-	fmt.Fprintf(w, "\n%s%s%s\n", ansiBoldCyan, title, ansiReset)
+	c := colorsFor(w)
+	fmt.Fprintf(w, "\n%s%s%s\n", c.boldCyan, title, c.reset)
 	if description != "" {
-		fmt.Fprintf(w, "%s%s%s\n", ansiCyan, description, ansiReset)
+		fmt.Fprintf(w, "%s%s%s\n", c.cyan, description, c.reset)
 	}
-	fmt.Fprintf(w, "%sUse ↑/↓ then Enter to choose. Type a number, back, or q instead.%s\n", ansiYellow, ansiReset)
+	fmt.Fprintf(w, "%sUse ↑/↓ then Enter to choose. Type a number, back, or q instead.%s\n", c.yellow, c.reset)
 	for idx, option := range options {
 		prefix := "  "
-		color := ansiCyan
+		color := c.cyan
 		if idx == selected {
 			prefix = "› "
-			color = ansiGreen
+			color = c.green
 		}
 		line := option.label
 		if option.description != "" {
 			line += " — " + option.description
 		}
-		fmt.Fprintf(w, "%s%s%s%s\n", color, prefix, line, ansiReset)
+		fmt.Fprintf(w, "%s%s%s%s\n", color, prefix, line, c.reset)
 	}
-	fmt.Fprintf(w, "%sSelection:%s %s\n", ansiYellow, ansiReset, typed)
+	fmt.Fprintf(w, "%sSelection:%s %s\n", c.yellow, c.reset, typed)
 }
 
 func readInteractiveInput(reader *bufio.Reader) (string, bool) {
@@ -623,14 +655,14 @@ func readMenuEventFromTerminal(stdin *os.File) (menuEvent, bool) {
 	}
 	defer term.Restore(fd, state)
 
-	event, ok := readTTYMenuEventFromReader(stdin)
+	event, ok := readTTYMenuEventFromReader(bufio.NewReader(stdin))
 	if !ok {
 		return menuEvent{}, false
 	}
 	return event, true
 }
 
-func readTTYMenuEventFromReader(r io.Reader) (menuEvent, bool) {
+func readTTYMenuEventFromReader(r *bufio.Reader) (menuEvent, bool) {
 	buf := make([]byte, 1)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		return menuEvent{}, false
@@ -642,6 +674,13 @@ func readTTYMenuEventFromReader(r io.Reader) (menuEvent, bool) {
 	case 0x7f, 0x08:
 		return menuEvent{backspace: true}, true
 	case 0x1b:
+		// Only consume the escape sequence when bytes are already buffered.
+		// Arrow keys send the full 3-byte sequence atomically, so "[A"/"[B"
+		// are in the buffer immediately. A lone ESC leaves no bytes buffered,
+		// so we treat it as a back/cancel event without blocking.
+		if r.Buffered() == 0 {
+			return menuEvent{text: "back"}, true
+		}
 		seq := make([]byte, 2)
 		if _, err := io.ReadFull(r, seq); err != nil {
 			return menuEvent{}, false
