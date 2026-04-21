@@ -310,12 +310,97 @@ func TestParseTerraformListOutput(t *testing.T) {
 	}
 }
 
-func TestHandleListActionShowsResourceAndBack(t *testing.T) {
+func TestReadTTYMenuEventFromReader(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want menuEvent
+	}{
+		{
+			name: "arrow down",
+			in:   "\x1b[B",
+			want: menuEvent{move: 1},
+		},
+		{
+			name: "arrow up",
+			in:   "\x1b[A",
+			want: menuEvent{move: -1},
+		},
+		{
+			name: "enter",
+			in:   "\r",
+			want: menuEvent{confirm: true},
+		},
+		{
+			name: "digit",
+			in:   "4",
+			want: menuEvent{text: "4"},
+		},
+		{
+			name: "backspace",
+			in:   "\x7f",
+			want: menuEvent{backspace: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := readTTYMenuEventFromReader(strings.NewReader(tt.in))
+			if !ok {
+				t.Fatalf("readTTYMenuEventFromReader() ok = false, want true")
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("readTTYMenuEventFromReader() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunTUIWithSessionUsesCompactStatePrompt(t *testing.T) {
+	var output bytes.Buffer
+
+	summaries := []state.Summary{
+		{Path: "/tmp/first.tfstate", ResourceCount: 1, Providers: []string{"aws"}, TerraformVersion: "1.6.0", Serial: 1},
+		{Path: "/tmp/second.tfstate", ResourceCount: 2, Providers: []string{"random"}, TerraformVersion: "1.6.1", Serial: 2},
+	}
+
+	session := interactiveSession{
+		reader:           bufio.NewReader(strings.NewReader(moveDown(1) + moveDown(4) + "q\n")),
+		out:              &output,
+		runTerraform:     func(args ...string) {},
+		captureTerraform: func(args ...string) (string, error) { return "", nil },
+		visitDir:         func(string) error { return nil },
+	}
+
+	runTUIWithSession(session, summaries)
+
+	got := output.String()
+	for _, want := range []string{
+		"/tmp/second.tfstate",
+		"Selection [1/2]:",
+		"Use \u2191/\u2193 then Enter, or type a number or q.",
+		"\x1b[",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("runTUIWithSession() output missing %q in %q", want, got)
+		}
+	}
+	for _, unwanted := range []string{
+		"/tmp/first.tfstate — 1 resources",
+		"/tmp/second.tfstate — 2 resources",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("runTUIWithSession() output unexpectedly contained %q in %q", unwanted, got)
+		}
+	}
+}
+
+func TestHandleListActionArrowSelectionShowsResourceAndLoops(t *testing.T) {
 	var output bytes.Buffer
 	var ran [][]string
 
 	session := interactiveSession{
-		reader: bufio.NewReader(strings.NewReader("2\nback\n")),
+		reader: bufio.NewReader(strings.NewReader(moveDown(1) + "\n" + "back\n")),
 		out:    &output,
 		runTerraform: func(args ...string) {
 			ran = append(ran, append([]string(nil), args...))
@@ -326,14 +411,103 @@ func TestHandleListActionShowsResourceAndBack(t *testing.T) {
 		visitDir: func(string) error { return nil },
 	}
 
-	handleListAction(session, "/tmp/example.tfstate")
+	exited := handleListAction(session, "/tmp/example.tfstate")
+	if exited {
+		t.Fatalf("handleListAction() = true, want false")
+	}
 
 	wantRun := [][]string{{"state", "show", "-state=/tmp/example.tfstate", "module.db.aws_db_instance.primary"}}
 	if !reflect.DeepEqual(ran, wantRun) {
 		t.Fatalf("handleListAction() ran %#v, want %#v", ran, wantRun)
 	}
-	if !strings.Contains(output.String(), "Choose a resource to inspect or type back:") {
-		t.Fatalf("handleListAction() output = %q, want resource prompt", output.String())
+	got := output.String()
+	for _, want := range []string{
+		"State resources",
+		"What next?",
+		"List another resource",
+		"\x1b[",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("handleListAction() output missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestHandleListActionQuitAfterShowingResource(t *testing.T) {
+	var output bytes.Buffer
+	var ran [][]string
+
+	session := interactiveSession{
+		reader: bufio.NewReader(strings.NewReader("\n" + moveDown(2))),
+		out:    &output,
+		runTerraform: func(args ...string) {
+			ran = append(ran, append([]string(nil), args...))
+		},
+		captureTerraform: func(args ...string) (string, error) {
+			return "aws_instance.web\nmodule.db.aws_db_instance.primary\n", nil
+		},
+		visitDir: func(string) error { return nil },
+	}
+
+	exited := handleListAction(session, "/tmp/example.tfstate")
+	if !exited {
+		t.Fatalf("handleListAction() = false, want true")
+	}
+
+	wantRun := [][]string{{"state", "show", "-state=/tmp/example.tfstate", "aws_instance.web"}}
+	if !reflect.DeepEqual(ran, wantRun) {
+		t.Fatalf("handleListAction() ran %#v, want %#v", ran, wantRun)
+	}
+}
+
+func TestRunStateActionsShowThenBack(t *testing.T) {
+	var output bytes.Buffer
+	var ran [][]string
+
+	session := interactiveSession{
+		reader: bufio.NewReader(strings.NewReader(moveDown(1) + "aws_instance.web\n" + moveDown(4) + moveDown(4))),
+		out:    &output,
+		runTerraform: func(args ...string) {
+			ran = append(ran, append([]string(nil), args...))
+		},
+		captureTerraform: func(args ...string) (string, error) { return "", nil },
+		visitDir:         func(string) error { return nil },
+	}
+
+	exited := runStateActions(session, state.Summary{Path: "/tmp/example.tfstate"})
+	if exited {
+		t.Fatalf("runStateActions(show) = true, want false")
+	}
+
+	wantRun := [][]string{{"state", "show", "-state=/tmp/example.tfstate", "aws_instance.web"}}
+	if !reflect.DeepEqual(ran, wantRun) {
+		t.Fatalf("runStateActions(show) ran %#v, want %#v", ran, wantRun)
+	}
+}
+
+func TestRunStateActionsDestroyCancelledAndBack(t *testing.T) {
+	var output bytes.Buffer
+	var ran [][]string
+
+	session := interactiveSession{
+		reader: bufio.NewReader(strings.NewReader(moveDown(2) + "NOPE\n" + moveDown(4))),
+		out:    &output,
+		runTerraform: func(args ...string) {
+			ran = append(ran, append([]string(nil), args...))
+		},
+		captureTerraform: func(args ...string) (string, error) { return "", nil },
+		visitDir:         func(string) error { return nil },
+	}
+
+	exited := runStateActions(session, state.Summary{Path: "/tmp/example.tfstate"})
+	if exited {
+		t.Fatalf("runStateActions(destroy) = true, want false")
+	}
+	if len(ran) != 0 {
+		t.Fatalf("runStateActions(destroy) ran %#v, want no terraform command", ran)
+	}
+	if !strings.Contains(output.String(), "Destroy cancelled") {
+		t.Fatalf("runStateActions(destroy) output = %q, want cancel message", output.String())
 	}
 }
 
@@ -342,7 +516,7 @@ func TestRunStateActionsVisitExits(t *testing.T) {
 	var visited string
 
 	session := interactiveSession{
-		reader:           bufio.NewReader(strings.NewReader("visit\n")),
+		reader:           bufio.NewReader(strings.NewReader(moveDown(3))),
 		out:              &output,
 		runTerraform:     func(args ...string) {},
 		captureTerraform: func(args ...string) (string, error) { return "", nil },
@@ -359,9 +533,13 @@ func TestRunStateActionsVisitExits(t *testing.T) {
 	if visited != filepath.Join("/tmp", "stack") {
 		t.Fatalf("visitDir() called with %q, want %q", visited, filepath.Join("/tmp", "stack"))
 	}
-	if !strings.Contains(output.String(), "visit  -> open a shell") {
-		t.Fatalf("runStateActions() output = %q, want visit help text", output.String())
+	if !strings.Contains(output.String(), "Open a shell in") {
+		t.Fatalf("runStateActions() output = %q, want visit menu text", output.String())
 	}
+}
+
+func moveDown(count int) string {
+	return strings.Repeat("\x1b[B", count) + "\n"
 }
 
 func writeTestStateFile(t *testing.T) string {
