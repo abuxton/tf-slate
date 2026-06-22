@@ -38,7 +38,7 @@ jobs:
           echo "Releasing ${VERSION}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Fetch full history so the annotated tag can be created on the exact
           # merge commit (the default shallow clone only fetches the tip).
