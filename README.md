@@ -31,16 +31,30 @@ A terarform helper utility to find and manage your terraform state files on your
 
 ##  Installation
 
-### Brew
+### Homebrew
+
+This repository is its own Homebrew tap (`Formula/tf-slate.rb`), so the tap
+name points at the repo with an explicit URL:
 
 ```
-brew tap abuxton/tap
-brew install abuxton/tap/tf-slate
+brew tap abuxton/tf-slate https://github.com/abuxton/tf-slate
+brew trust --formula abuxton/tf-slate/tf-slate
+brew install tf-slate
 tf-slate -v
-tf-slate #same as tf-slate -h
-tf-slate -v # returns version
-tf-slate . simply usage, search directory tree from $CWD.
 ```
+
+Upgrade with `brew upgrade tf-slate`; remove with `brew uninstall tf-slate`
+and `brew untap abuxton/tf-slate`. The formula builds from the tagged source
+archive, so it works on macOS and Linux (Linuxbrew) and needs Go only at build
+time. Terraform is optional and only needed for the interactive list/show/destroy
+follow-ups.
+
+Prebuilt Linux and macOS packages (per-OS/arch release assets with bottle-style
+formula blocks) are planned for a future release.
+
+Maintainers: `task brew:audit` lints the formula, `task brew:test` installs it
+from the checkout, and `task brew:update VERSION=x.y.z` bumps it. The Release
+workflow opens a formula-bump PR automatically after each release.
 
 ### Build locally
 
@@ -179,6 +193,8 @@ Once the PR is reviewed and merged, the **Release** GitHub Actions workflow
 3. Creates an annotated git tag (`v0.1.0`) on the merge commit.
 4. Publishes a GitHub Release with auto-generated release notes and the
    compiled binary as an asset.
+5. Opens a PR bumping `Formula/tf-slate.rb` to the new tag (requires
+   "Allow GitHub Actions to create and approve pull requests").
 
 ### Escape hatch — tag manually
 
@@ -200,6 +216,7 @@ The following settings are required before the Release workflow can run:
 |---------|----------|-------|
 | Workflow permissions | Settings → Actions → General → Workflow permissions | **Read and write permissions** |
 | `release` label | Settings → Labels → New label | Name: `release` (required for `task release:prepare`) |
+| Actions PRs | Settings → Actions → General | Allow GitHub Actions to create pull requests (formula bump PR) |
 | Branch protection (recommended) | Settings → Branches → Add rule | Require CI to pass before merging `main` |
 
 ## Test

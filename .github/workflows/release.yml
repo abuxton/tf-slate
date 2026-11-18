@@ -73,3 +73,40 @@ jobs:
             --title "Release ${{ steps.version.outputs.version }}" \
             --generate-notes \
             dist/tf-slate
+
+  update-formula:
+    name: Open Homebrew formula PR
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # push the formula branch
+      pull-requests: write  # open the formula PR
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Update Formula/tf-slate.rb and open a PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.event.pull_request.head.ref }}
+        run: |
+          VERSION="${VERSION#release/}"
+          scripts/update-formula.sh "${VERSION}"
+          if git diff --quiet -- Formula/tf-slate.rb; then
+            echo "Formula already up to date"
+            exit 0
+          fi
+          BRANCH="chore/formula-${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${BRANCH}"
+          git add Formula/tf-slate.rb
+          git commit -m "chore(brew): update formula to ${VERSION}"
+          git push --force origin "${BRANCH}"
+          gh pr create \
+            --base main --head "${BRANCH}" \
+            --title "chore(brew): update formula to ${VERSION}" \
+            --body "Automated formula bump for ${VERSION}. Review the url and sha256, then merge." \
+            || echo "PR already exists"
