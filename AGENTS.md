@@ -4,11 +4,11 @@ Single source of truth for agent governance in this repository. Human-facing doc
 
 ## Project overview
 
-`tf-slate` is a small Go CLI (module `github.com/abuxton/tf-slate`, Go `1.26`, one direct dependency: `golang.org/x/term`) that recursively discovers local Terraform state files (`*.tfstate`), summarizes them, and optionally offers an interactive line-oriented prompt wrapping the local `terraform` binary.
+`tf-slate` is a small Go CLI (module `github.com/abuxton/tf-slate`, Go `1.26`, direct dependencies: `golang.org/x/term`, Bubble Tea, Lip Gloss) that recursively discovers local Terraform state files (`*.tfstate`), summarizes them, and optionally offers an interactive interface (Bubble Tea, with a line-oriented `--classic`/non-TTY fallback) wrapping the local `terraform` binary.
 
 | Path | Responsibility |
 | --- | --- |
-| `cmd/tf-slate/main.go` | Flags, positional root, summary table, interactive prompt flow, `terraform` subprocess execution, `visit` shell |
+| `cmd/tf-slate/main.go` | Flags, positional root, summary table, classic prompt flow, `terraform` subprocess execution, `visit` shell |
 | `internal/state/` | Filesystem scan (`FindStateFiles`) and state parsing (`SummarizeStateFile`) |
 | `internal/output/` | Non-interactive formats: `string`, `json`, `yaml`, `csv` |
 | `Taskfile.yml` | Canonical dev, validate, build and release automation |
@@ -35,7 +35,7 @@ go test ./internal/state -run TestSummarizeStateFile   # focused test
 ## Architecture rules
 
 - Keep the package split sharp: parsing/discovery in `internal/state`, rendering in `internal/output`, UX and subprocesses in `cmd/tf-slate`. Never put `terraform` subprocess calls in `internal/state`.
-- Keep the TUI a lightweight line-oriented prompt loop; do not introduce a TUI framework.
+- The default interactive UI is Bubble Tea in `cmd/tf-slate/tui.go` (ADR `docs/adr/0001-tui-library.md`); side effects go through `tuiDeps` so tests drive `Update` directly. Keep the classic prompt loop working as the `--classic`/non-TTY fallback. Interactive mode defaults to `-nz -w` (explicit flags win; `z` toggles empty states in the TUI); `--ni` defaults are unchanged. Regenerate the README GIF with `task docs:demo` when the UI changes.
 - Interactive actions are thin wrappers over `terraform state list`, `terraform state show` and `terraform destroy`; `visit` opens a shell in the state file directory and exits the client.
 - If `terraform` is missing, print the manual fallback message; do not crash.
 - Keep dependencies minimal. Any `go.mod` change must be followed by `task mod:tidy` (CI fails on an untidy `go.mod`/`go.sum`). Keep the `go` directive on a supported Go release.
@@ -49,7 +49,7 @@ go test ./internal/state -run TestSummarizeStateFile   # focused test
 - Terraform subprocesses must run with `cmd.Dir` set to the state file's directory (providers and config load from the working directory). `show`/`destroy` are guarded by `checkTerraformSetup` (needs `*.tf` and `.terraform/`). Pass `-state` only for non-default state file names (`stateArgs`).
 - State parsing: support top-level `resources` and nested `values.root_module`/`child_modules`; ignore `mode == "data"`; count managed resources by `len(instances)` (zero instances counts as `1`); normalize providers to short names (`aws` from `registry.terraform.io/hashicorp/aws`), from `provider` or `provider_name`.
 - Summary contract: path, managed resource count, providers, Terraform version, serial.
-- CLI flag aliases: `--ni`/`-non-interactive`, `-o`/`-output`, `-s`/`-summarize`, `-nz`/`-non-zero`, `-w`/`-weighted`, `-v`/`--version`. No args prints help; a single positional path equals `-root`. Structured outputs omit the footer summary table. Update README when changing any of this.
+- CLI flag aliases: `--ni`/`-non-interactive`, `-o`/`-output`, `-s`/`-summarize`, `-nz`/`-non-zero`, `-w`/`-weighted`, `--classic`, `-v`/`--version`. No args prints help; a single positional path equals `-root`. Structured outputs omit the footer summary table. Update README when changing any of this.
 
 ## Code style
 

@@ -78,6 +78,13 @@ tasks:
     cmds:
       - go mod tidy
 
+  docs:demo:
+    desc: Re-record docs/media/tui-demo.gif with vhs (needs vhs, ttyd, ffmpeg)
+    deps: [build]
+    cmds:
+      - scripts/demo-fixtures.sh
+      - vhs docs/media/tui-demo.tape
+
   brew:audit:
     desc: Lint and audit the Homebrew formula (requires brew)
     cmds:

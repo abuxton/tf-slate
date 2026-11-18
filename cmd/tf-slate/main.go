@@ -124,9 +124,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
+	setFlags := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { setFlags[f.Name] = true })
+	interactive := !opts.nonInteractive
+	// The interactive view defaults to -nz -w; either can be switched off with -nz=false / -w=false.
+	if interactive && !setFlags["non-zero"] && !setFlags["nz"] {
+		opts.nonZero = true
+	}
+	if interactive && !setFlags["weighted"] && !setFlags["w"] {
+		opts.weighted = true
+	}
+
 	displaySummaries := summaries
 	if opts.nonZero {
 		displaySummaries = filterNonZeroSummaries(displaySummaries)
+	}
+	if interactive && len(displaySummaries) == 0 && len(summaries) > 0 && !setFlags["non-zero"] && !setFlags["nz"] {
+		// Nothing has resources, so start with the zero-resource states visible.
+		opts.nonZero = false
+		displaySummaries = summaries
 	}
 	if opts.weighted {
 		sortSummariesWeighted(displaySummaries)
@@ -151,6 +167,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		printSummaryTable(stdout, displaySummaries)
 	}
 
+	if !opts.classic && stdioIsTerminal() {
+		if err := runBubbleTUI(summaries, opts.nonZero, opts.weighted); err != nil {
+			return writeErr(stderr, fmt.Errorf("interactive interface failed: %w", err))
+		}
+		return 0
+	}
 	runTUI(displaySummaries)
 	return 0
 }
@@ -163,6 +185,7 @@ type options struct {
 	nonZero        bool
 	weighted       bool
 	showVersion    bool
+	classic        bool
 }
 
 type interactiveSession struct {
@@ -202,10 +225,11 @@ func newFlagSet(stderr io.Writer) (*flag.FlagSet, *options) {
 	fs.StringVar(&opts.outputFormat, "o", string(output.FormatString), "alias for --output")
 	fs.BoolVar(&opts.summarize, "summarize", false, "print a summary table grouping state files by zero and non-zero resource counts")
 	fs.BoolVar(&opts.summarize, "s", false, "alias for --summarize")
-	fs.BoolVar(&opts.nonZero, "non-zero", false, "show only state files with more than zero resources")
+	fs.BoolVar(&opts.nonZero, "non-zero", false, "show only state files with more than zero resources (default in interactive mode; use -nz=false to include empty ones)")
 	fs.BoolVar(&opts.nonZero, "nz", false, "alias for --non-zero")
-	fs.BoolVar(&opts.weighted, "weighted", false, "sort state files by greatest resource count first")
+	fs.BoolVar(&opts.weighted, "weighted", false, "sort state files by greatest resource count first (default in interactive mode; use -w=false to disable)")
 	fs.BoolVar(&opts.weighted, "w", false, "alias for --weighted")
+	fs.BoolVar(&opts.classic, "classic", false, "use the classic line-based prompts instead of the full-screen interface")
 	fs.BoolVar(&opts.showVersion, "version", false, "print the tf-slate client version")
 	fs.BoolVar(&opts.showVersion, "v", false, "alias for --version")
 
@@ -659,7 +683,7 @@ func renderStatePrompt(w io.Writer, summaries []state.Summary, selected int, typ
 	summary := summaries[selected]
 	fmt.Fprintf(w, "\n%sSelect a state file%s\n", c.boldCyan, c.reset)
 	fmt.Fprintf(w, "%sReview state files discovered in the scan.%s\n", c.cyan, c.reset)
-	fmt.Fprintf(w, "%sUse ↑/↓ then Enter, or type a number or q.%s\n", c.yellow, c.reset)
+	fmt.Fprintf(w, "%sUse ↑/↓ then Enter, or type a number or q to quit.%s\n", c.yellow, c.reset)
 	fmt.Fprintf(w, "%sCurrent [%d/%d]%s\n", c.green, selected+1, len(summaries), c.reset)
 	fmt.Fprintf(w, "%s%s%s\n", c.cyan, summary.Path, c.reset)
 	fmt.Fprintf(w, "%s%d resources | providers: %s | terraform: %s%s\n", c.cyan, summary.ResourceCount, valueOrDash(strings.Join(summary.Providers, ",")), valueOrDash(summary.TerraformVersion), c.reset)
