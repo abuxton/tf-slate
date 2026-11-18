@@ -172,6 +172,7 @@ type interactiveSession struct {
 	runTerraform     func(dir string, args ...string)
 	captureTerraform func(dir string, args ...string) (string, error)
 	checkSetup       func(dir string) error
+	deleteFile       func(path string) error
 	visitDir         func(string) error
 }
 
@@ -302,6 +303,7 @@ func runTUI(summaries []state.Summary) {
 		runTerraform:     runTerraform,
 		captureTerraform: captureTerraform,
 		checkSetup:       checkTerraformSetup,
+		deleteFile:       os.Remove,
 		visitDir:         openShellInDir,
 	}
 	runTUIWithSession(session, summaries)
@@ -316,13 +318,29 @@ func runTUIWithSession(session interactiveSession, summaries []state.Summary) {
 		}
 		selected = next
 
-		if runStateActions(session, summaries[selected]) {
+		exit, deleted := stateActions(session, summaries[selected])
+		if exit {
 			return
+		}
+		if deleted {
+			summaries = append(summaries[:selected:selected], summaries[selected+1:]...)
+			if len(summaries) == 0 {
+				fmt.Fprintln(session.out, "No Terraform state files remain")
+				return
+			}
+			selected = min(selected, len(summaries)-1)
 		}
 	}
 }
 
 func runStateActions(session interactiveSession, summary state.Summary) bool {
+	exit, _ := stateActions(session, summary)
+	return exit
+}
+
+// stateActions runs the action menu for one state file. It reports whether the
+// session should exit and whether the state file was deleted.
+func stateActions(session interactiveSession, summary state.Summary) (exit, deleted bool) {
 	for {
 		fmt.Fprintf(session.out, "\nState: %s\n", summary.Path)
 		fmt.Fprintf(session.out, "Resources: %d | Providers: %s | Terraform: %s | Serial: %d\n", summary.ResourceCount, strings.Join(summary.Providers, ","), valueOrDash(summary.TerraformVersion), summary.Serial)
@@ -331,6 +349,7 @@ func runStateActions(session interactiveSession, summary state.Summary) bool {
 			{value: "show", label: "Show a resource by address", description: describeTerraform(summary.Path, "state", "show", "<resource-address>")},
 			{value: "destroy", label: "Destroy resources", description: describeTerraform(summary.Path, "destroy")},
 			{value: "visit", label: "Open a shell in the state directory", description: fmt.Sprintf("Open a shell in %q and exit tf-slate", filepath.Dir(summary.Path))},
+			{value: "delete", label: "Delete the state file", description: fmt.Sprintf("Permanently remove %q (does not destroy resources)", summary.Path)},
 			{value: "back", label: "Back to the state list", description: "Return to the previous menu."},
 			{value: "quit", label: "Quit", description: "Exit tf-slate."},
 		})
@@ -338,7 +357,7 @@ func runStateActions(session interactiveSession, summary state.Summary) bool {
 		switch action {
 		case "list":
 			if handleListAction(session, summary.Path) {
-				return true
+				return true, false
 			}
 		case "show":
 			fmt.Fprint(session.out, "Enter resource address: ")
@@ -355,10 +374,10 @@ func runStateActions(session interactiveSession, summary state.Summary) bool {
 			switch handlePostShowAction(session, summary.Path) {
 			case "list":
 				if handleListAction(session, summary.Path) {
-					return true
+					return true, false
 				}
 			case "quit":
-				return true
+				return true, false
 			}
 		case "destroy":
 			fmt.Fprint(session.out, "Type DESTROY to confirm: ")
@@ -371,22 +390,61 @@ func runStateActions(session interactiveSession, summary state.Summary) bool {
 				continue
 			}
 			session.runTerraform(filepath.Dir(summary.Path), stateArgs(summary.Path, "destroy")...)
+		case "delete":
+			if deleteStateFile(session, summary) {
+				return false, true
+			}
 		case "visit":
 			fmt.Fprintf(session.out, "Opening shell in %s\n", filepath.Dir(summary.Path))
 			if err := session.visitDir(filepath.Dir(summary.Path)); err != nil {
 				fmt.Fprintf(session.out, "visit failed: %v\n", err)
 				continue
 			}
-			return true
+			return true, false
 		case "back", "b", "n":
 			fmt.Fprintln(session.out, "Returning to the state file list")
-			return false
+			return false, false
 		case "quit", "q":
-			return true
+			return true, false
 		default:
 			fmt.Fprintln(session.out, "No command executed")
 		}
 	}
+}
+
+// deleteStateFile removes the state file after an exact DELETE confirmation and
+// reports whether it was removed. A sibling .backup file is only removed if the user agrees.
+func deleteStateFile(session interactiveSession, summary state.Summary) bool {
+	if summary.ResourceCount > 0 {
+		fmt.Fprintf(session.out, "WARNING: this state tracks %d managed resource(s). Deleting it orphans them; run destroy first unless they are already gone.\n", summary.ResourceCount)
+	}
+	fmt.Fprintf(session.out, "This permanently deletes %s\n", summary.Path)
+	fmt.Fprint(session.out, "Type DELETE to confirm: ")
+	confirm, _ := session.reader.ReadString('\n')
+	if strings.TrimSpace(confirm) != "DELETE" {
+		fmt.Fprintln(session.out, "Delete cancelled")
+		return false
+	}
+	if err := session.deleteFile(summary.Path); err != nil {
+		fmt.Fprintf(session.out, "delete failed: %v\n", err)
+		return false
+	}
+	fmt.Fprintf(session.out, "Deleted %s\n", summary.Path)
+
+	backup := summary.Path + ".backup"
+	if _, err := os.Stat(backup); err != nil {
+		return true
+	}
+	fmt.Fprintf(session.out, "Also delete %s? [y/N]: ", backup)
+	answer, _ := session.reader.ReadString('\n')
+	if strings.EqualFold(strings.TrimSpace(answer), "y") {
+		if err := session.deleteFile(backup); err != nil {
+			fmt.Fprintf(session.out, "delete failed: %v\n", err)
+		} else {
+			fmt.Fprintf(session.out, "Deleted %s\n", backup)
+		}
+	}
+	return true
 }
 
 func handleListAction(session interactiveSession, statePath string) bool {

@@ -4,7 +4,7 @@ Single source of truth for agent governance in this repository. Human-facing doc
 
 ## Project overview
 
-`tf-slate` is a small Go CLI (module `github.com/abuxton/tf-slate`, Go `1.22`, one dependency: `golang.org/x/term`) that recursively discovers local Terraform state files (`*.tfstate`), summarizes them, and optionally offers an interactive line-oriented prompt wrapping the local `terraform` binary.
+`tf-slate` is a small Go CLI (module `github.com/abuxton/tf-slate`, Go `1.26`, one direct dependency: `golang.org/x/term`) that recursively discovers local Terraform state files (`*.tfstate`), summarizes them, and optionally offers an interactive line-oriented prompt wrapping the local `terraform` binary.
 
 | Path | Responsibility |
 | --- | --- |
@@ -38,14 +38,14 @@ go test ./internal/state -run TestSummarizeStateFile   # focused test
 - Keep the TUI a lightweight line-oriented prompt loop; do not introduce a TUI framework.
 - Interactive actions are thin wrappers over `terraform state list`, `terraform state show` and `terraform destroy`; `visit` opens a shell in the state file directory and exits the client.
 - If `terraform` is missing, print the manual fallback message; do not crash.
-- Keep dependencies minimal. Any `go.mod` change must be followed by `task mod:tidy` (CI fails on an untidy `go.mod`/`go.sum`). Keep compatibility with Go 1.22.
+- Keep dependencies minimal. Any `go.mod` change must be followed by `task mod:tidy` (CI fails on an untidy `go.mod`/`go.sum`). Keep the `go` directive on a supported Go release.
 
 ## Behavioral invariants (do not change casually)
 
 - Output is deterministic: `FindStateFiles` returns sorted paths; providers are sorted.
 - Use `filepath` APIs only (Linux and Windows compatible); skip `.git` during traversal.
 - Unreadable or invalid state files are skipped with a stderr note; processing continues.
-- Destroy requires the exact confirmation string `DESTROY`.
+- Destroy requires the exact confirmation string `DESTROY`; deleting a state file requires the exact string `DELETE`, warns when the state still tracks resources, and removes a sibling `.backup` file only if the user agrees. Deletion goes through the injectable `session.deleteFile`.
 - Terraform subprocesses must run with `cmd.Dir` set to the state file's directory (providers and config load from the working directory). `show`/`destroy` are guarded by `checkTerraformSetup` (needs `*.tf` and `.terraform/`). Pass `-state` only for non-default state file names (`stateArgs`).
 - State parsing: support top-level `resources` and nested `values.root_module`/`child_modules`; ignore `mode == "data"`; count managed resources by `len(instances)` (zero instances counts as `1`); normalize providers to short names (`aws` from `registry.terraform.io/hashicorp/aws`), from `provider` or `provider_name`.
 - Summary contract: path, managed resource count, providers, Terraform version, serial.

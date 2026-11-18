@@ -26,6 +26,7 @@ A terarform helper utility to find and manage your terraform state files on your
   - `terraform state show`
   - `terraform destroy` (with explicit confirmation)
   - Terraform commands run from the state file's directory, so `show` and `destroy` need the configuration (`*.tf`) and an initialized `.terraform/` there; otherwise tf-slate explains what is missing. `-state` is only passed for state files not named `terraform.tfstate`.
+  - `delete`, which permanently removes the selected state file after typing `DELETE` (warns if it still tracks resources and optionally removes the `.backup` file); it does not destroy infrastructure
   - `visit`, which opens a shell in the selected state file directory and exits the interactive client
 
 ##  Installation
