@@ -151,6 +151,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		printSummaryTable(stdout, displaySummaries)
 	}
 
+	if !opts.classic && stdioIsTerminal() {
+		if err := runBubbleTUI(displaySummaries); err != nil {
+			return writeErr(stderr, fmt.Errorf("interactive interface failed: %w", err))
+		}
+		return 0
+	}
 	runTUI(displaySummaries)
 	return 0
 }
@@ -163,6 +169,7 @@ type options struct {
 	nonZero        bool
 	weighted       bool
 	showVersion    bool
+	classic        bool
 }
 
 type interactiveSession struct {
@@ -206,6 +213,7 @@ func newFlagSet(stderr io.Writer) (*flag.FlagSet, *options) {
 	fs.BoolVar(&opts.nonZero, "nz", false, "alias for --non-zero")
 	fs.BoolVar(&opts.weighted, "weighted", false, "sort state files by greatest resource count first")
 	fs.BoolVar(&opts.weighted, "w", false, "alias for --weighted")
+	fs.BoolVar(&opts.classic, "classic", false, "use the classic line-based prompts instead of the full-screen interface")
 	fs.BoolVar(&opts.showVersion, "version", false, "print the tf-slate client version")
 	fs.BoolVar(&opts.showVersion, "v", false, "alias for --version")
 
