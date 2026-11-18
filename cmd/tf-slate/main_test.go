@@ -371,7 +371,7 @@ func TestRunTUIWithSessionUsesCompactStatePrompt(t *testing.T) {
 	}
 
 	session := interactiveSession{
-		reader:           bufio.NewReader(strings.NewReader(moveDown(1) + moveDown(4) + "q\n")),
+		reader:           bufio.NewReader(strings.NewReader(moveDown(1) + moveDown(5) + "q\n")),
 		out:              &output,
 		runTerraform:     func(dir string, args ...string) {},
 		captureTerraform: func(dir string, args ...string) (string, error) { return "", nil },
@@ -469,7 +469,7 @@ func TestRunStateActionsShowThenBack(t *testing.T) {
 	var ran [][]string
 
 	session := interactiveSession{
-		reader: bufio.NewReader(strings.NewReader(moveDown(1) + "aws_instance.web\n" + moveDown(4) + moveDown(4))),
+		reader: bufio.NewReader(strings.NewReader(moveDown(1) + "aws_instance.web\n" + moveDown(4) + moveDown(5))),
 		out:    &output,
 		runTerraform: func(dir string, args ...string) {
 			ran = append(ran, append([]string(nil), args...))
@@ -494,7 +494,7 @@ func TestRunStateActionsDestroyCancelledAndBack(t *testing.T) {
 	var ran [][]string
 
 	session := interactiveSession{
-		reader: bufio.NewReader(strings.NewReader(moveDown(2) + "NOPE\n" + moveDown(4))),
+		reader: bufio.NewReader(strings.NewReader(moveDown(2) + "NOPE\n" + moveDown(5))),
 		out:    &output,
 		runTerraform: func(dir string, args ...string) {
 			ran = append(ran, append([]string(nil), args...))
@@ -539,6 +539,91 @@ func TestRunStateActionsVisitExits(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "Open a shell in") {
 		t.Fatalf("runStateActions() output = %q, want visit menu text", output.String())
+	}
+}
+
+func deleteTestSession(input string, deleted *[]string) interactiveSession {
+	return interactiveSession{
+		reader:     bufio.NewReader(strings.NewReader(input)),
+		out:        &bytes.Buffer{},
+		deleteFile: func(path string) error { *deleted = append(*deleted, path); return nil },
+	}
+}
+
+func TestDeleteStateFileRequiresExactConfirmation(t *testing.T) {
+	var deleted []string
+	session := deleteTestSession("delete\n", &deleted)
+
+	if deleteStateFile(session, state.Summary{Path: "/w/terraform.tfstate"}) {
+		t.Fatalf("deleteStateFile() = true for wrong confirmation")
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("deleted %v, want nothing", deleted)
+	}
+}
+
+func TestDeleteStateFileWarnsAndRemovesBackupOnlyWhenAsked(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "terraform.tfstate")
+	for _, f := range []string{path, path + ".backup"} {
+		if err := os.WriteFile(f, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, tt := range []struct {
+		answer string
+		want   []string
+	}{
+		{"n\n", []string{path}},
+		{"y\n", []string{path, path + ".backup"}},
+	} {
+		var deleted []string
+		session := deleteTestSession("DELETE\n"+tt.answer, &deleted)
+		out := session.out.(*bytes.Buffer)
+
+		if !deleteStateFile(session, state.Summary{Path: path, ResourceCount: 3}) {
+			t.Fatalf("deleteStateFile() = false, want true")
+		}
+		if !reflect.DeepEqual(deleted, tt.want) {
+			t.Fatalf("answer %q deleted %v, want %v", tt.answer, deleted, tt.want)
+		}
+		if !strings.Contains(out.String(), "3 managed resource") {
+			t.Fatalf("output = %q, want resource warning", out.String())
+		}
+	}
+}
+
+func TestDeleteStateFileReportsRemovalError(t *testing.T) {
+	session := interactiveSession{
+		reader:     bufio.NewReader(strings.NewReader("DELETE\n")),
+		out:        &bytes.Buffer{},
+		deleteFile: func(string) error { return errors.New("permission denied") },
+	}
+	if deleteStateFile(session, state.Summary{Path: "/w/terraform.tfstate"}) {
+		t.Fatalf("deleteStateFile() = true on removal error")
+	}
+	if !strings.Contains(session.out.(*bytes.Buffer).String(), "permission denied") {
+		t.Fatalf("error not reported")
+	}
+}
+
+func TestRunTUIDeleteRemovesEntryAndEndsWhenEmpty(t *testing.T) {
+	var deleted []string
+	var output bytes.Buffer
+	session := interactiveSession{
+		reader:     bufio.NewReader(strings.NewReader("1\n" + moveDown(4) + "DELETE\n")),
+		out:        &output,
+		deleteFile: func(p string) error { deleted = append(deleted, p); return nil },
+	}
+
+	runTUIWithSession(session, []state.Summary{{Path: "/w/only.tfstate"}})
+
+	if !reflect.DeepEqual(deleted, []string{"/w/only.tfstate"}) {
+		t.Fatalf("deleted %v", deleted)
+	}
+	if !strings.Contains(output.String(), "No Terraform state files remain") {
+		t.Fatalf("output = %q, want empty-list message", output.String())
 	}
 }
 
