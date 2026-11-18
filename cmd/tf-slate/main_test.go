@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -372,8 +373,8 @@ func TestRunTUIWithSessionUsesCompactStatePrompt(t *testing.T) {
 	session := interactiveSession{
 		reader:           bufio.NewReader(strings.NewReader(moveDown(1) + moveDown(4) + "q\n")),
 		out:              &output,
-		runTerraform:     func(args ...string) {},
-		captureTerraform: func(args ...string) (string, error) { return "", nil },
+		runTerraform:     func(dir string, args ...string) {},
+		captureTerraform: func(dir string, args ...string) (string, error) { return "", nil },
 		visitDir:         func(string) error { return nil },
 	}
 
@@ -406,10 +407,10 @@ func TestHandleListActionArrowSelectionShowsResourceAndLoops(t *testing.T) {
 	session := interactiveSession{
 		reader: bufio.NewReader(strings.NewReader(moveDown(1) + "\n" + "back\n")),
 		out:    &output,
-		runTerraform: func(args ...string) {
+		runTerraform: func(dir string, args ...string) {
 			ran = append(ran, append([]string(nil), args...))
 		},
-		captureTerraform: func(args ...string) (string, error) {
+		captureTerraform: func(dir string, args ...string) (string, error) {
 			return "aws_instance.web\nmodule.db.aws_db_instance.primary\n", nil
 		},
 		visitDir: func(string) error { return nil },
@@ -443,10 +444,10 @@ func TestHandleListActionQuitAfterShowingResource(t *testing.T) {
 	session := interactiveSession{
 		reader: bufio.NewReader(strings.NewReader("\n" + moveDown(2))),
 		out:    &output,
-		runTerraform: func(args ...string) {
+		runTerraform: func(dir string, args ...string) {
 			ran = append(ran, append([]string(nil), args...))
 		},
-		captureTerraform: func(args ...string) (string, error) {
+		captureTerraform: func(dir string, args ...string) (string, error) {
 			return "aws_instance.web\nmodule.db.aws_db_instance.primary\n", nil
 		},
 		visitDir: func(string) error { return nil },
@@ -470,10 +471,10 @@ func TestRunStateActionsShowThenBack(t *testing.T) {
 	session := interactiveSession{
 		reader: bufio.NewReader(strings.NewReader(moveDown(1) + "aws_instance.web\n" + moveDown(4) + moveDown(4))),
 		out:    &output,
-		runTerraform: func(args ...string) {
+		runTerraform: func(dir string, args ...string) {
 			ran = append(ran, append([]string(nil), args...))
 		},
-		captureTerraform: func(args ...string) (string, error) { return "", nil },
+		captureTerraform: func(dir string, args ...string) (string, error) { return "", nil },
 		visitDir:         func(string) error { return nil },
 	}
 
@@ -495,10 +496,10 @@ func TestRunStateActionsDestroyCancelledAndBack(t *testing.T) {
 	session := interactiveSession{
 		reader: bufio.NewReader(strings.NewReader(moveDown(2) + "NOPE\n" + moveDown(4))),
 		out:    &output,
-		runTerraform: func(args ...string) {
+		runTerraform: func(dir string, args ...string) {
 			ran = append(ran, append([]string(nil), args...))
 		},
-		captureTerraform: func(args ...string) (string, error) { return "", nil },
+		captureTerraform: func(dir string, args ...string) (string, error) { return "", nil },
 		visitDir:         func(string) error { return nil },
 	}
 
@@ -521,8 +522,8 @@ func TestRunStateActionsVisitExits(t *testing.T) {
 	session := interactiveSession{
 		reader:           bufio.NewReader(strings.NewReader(moveDown(3))),
 		out:              &output,
-		runTerraform:     func(args ...string) {},
-		captureTerraform: func(args ...string) (string, error) { return "", nil },
+		runTerraform:     func(dir string, args ...string) {},
+		captureTerraform: func(dir string, args ...string) (string, error) { return "", nil },
 		visitDir: func(dir string) error {
 			visited = dir
 			return nil
@@ -543,6 +544,87 @@ func TestRunStateActionsVisitExits(t *testing.T) {
 
 func moveDown(count int) string {
 	return strings.Repeat("\x1b[B", count) + "\n"
+}
+
+func TestStateArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		sub  []string
+		want []string
+	}{
+		{"default destroy", "/w/terraform.tfstate", []string{"destroy"}, []string{"destroy"}},
+		{"default show", "/w/terraform.tfstate", []string{"state", "show", "a.b"}, []string{"state", "show", "a.b"}},
+		{"custom destroy", "/w/x.tfstate", []string{"destroy"}, []string{"destroy", "-state=/w/x.tfstate"}},
+		{"custom list", "/w/x.tfstate", []string{"state", "list"}, []string{"state", "list", "-state=/w/x.tfstate"}},
+		{"custom show", "/w/x.tfstate", []string{"state", "show", "a.b"}, []string{"state", "show", "-state=/w/x.tfstate", "a.b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stateArgs(tt.path, tt.sub...); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("stateArgs() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunStateActionsDestroyRunsInStateDir(t *testing.T) {
+	var output bytes.Buffer
+	var gotDir string
+	var gotArgs []string
+	session := interactiveSession{
+		reader: bufio.NewReader(strings.NewReader("destroy\nDESTROY\nback\n")),
+		out:    &output,
+		runTerraform: func(dir string, args ...string) {
+			gotDir, gotArgs = dir, args
+		},
+		checkSetup: func(string) error { return nil },
+	}
+
+	runStateActions(session, state.Summary{Path: filepath.Join("/w", "stack", "terraform.tfstate")})
+
+	if gotDir != filepath.Join("/w", "stack") || !reflect.DeepEqual(gotArgs, []string{"destroy"}) {
+		t.Fatalf("destroy ran in %q with %#v", gotDir, gotArgs)
+	}
+}
+
+func TestRunStateActionsDestroySkippedWhenNotInitialized(t *testing.T) {
+	var output bytes.Buffer
+	ran := false
+	session := interactiveSession{
+		reader:       bufio.NewReader(strings.NewReader("destroy\nDESTROY\nback\n")),
+		out:          &output,
+		runTerraform: func(string, ...string) { ran = true },
+		checkSetup:   func(string) error { return errors.New("not initialized") },
+	}
+
+	runStateActions(session, state.Summary{Path: "/w/terraform.tfstate"})
+
+	if ran {
+		t.Fatalf("terraform ran despite failed setup check")
+	}
+	if !strings.Contains(output.String(), "not initialized") {
+		t.Fatalf("output = %q, want setup message", output.String())
+	}
+}
+
+func TestCheckTerraformSetup(t *testing.T) {
+	dir := t.TempDir()
+	if err := checkTerraformSetup(dir); err == nil || !strings.Contains(err.Error(), "configuration") {
+		t.Fatalf("empty dir error = %v, want missing configuration", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkTerraformSetup(dir); err == nil || !strings.Contains(err.Error(), "terraform init") {
+		t.Fatalf("uninitialized dir error = %v, want init hint", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, ".terraform"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkTerraformSetup(dir); err != nil {
+		t.Fatalf("ready dir error = %v", err)
+	}
 }
 
 func writeTestStateFile(t *testing.T) string {
