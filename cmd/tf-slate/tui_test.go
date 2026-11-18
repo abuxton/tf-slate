@@ -101,6 +101,20 @@ func TestTUIListThenShowReturnsToResources(t *testing.T) {
 	}
 }
 
+func TestTUIListResultIsIgnoredAfterSelectingAnotherState(t *testing.T) {
+	var deleted []string
+	m := selectAction(testTUIModel(&deleted), "list")
+	m, cmd := send(m, key("enter"))
+	if cmd == nil {
+		t.Fatal("list should return a command")
+	}
+	m, _ = send(m, key("esc"), key("down"), key("enter"))
+	m, _ = send(m, cmd())
+	if m.screen != screenActions || m.cursor != 1 || m.status != "" {
+		t.Fatalf("stale result changed selected state: screen=%v cursor=%d status=%q", m.screen, m.cursor, m.status)
+	}
+}
+
 func TestTUIDestroyRequiresExactConfirmation(t *testing.T) {
 	var deleted []string
 	m := selectAction(testTUIModel(&deleted), "destroy")
@@ -137,9 +151,62 @@ func TestTUIDeleteRequiresDELETEAndDropsEntry(t *testing.T) {
 		t.Fatalf("deleted=%v status=%q", deleted, m.status)
 	}
 	m, _ = send(m, key("enter"))
+	m, _ = send(m, append(typeText(" DELETE "), key("enter"))...)
+	if len(deleted) != 0 || m.status != "Delete cancelled" {
+		t.Fatalf("surrounding whitespace must cancel; deleted=%v status=%q", deleted, m.status)
+	}
+	m, _ = send(m, key("enter"))
 	m, _ = send(m, append(typeText("DELETE"), key("enter"))...)
 	if len(deleted) != 1 || len(m.summaries) != 1 || m.screen != screenStates {
 		t.Fatalf("deleted=%v summaries=%d screen=%v", deleted, len(m.summaries), m.screen)
+	}
+}
+
+func TestTUIDeleteBackupEscapeDropsDeletedState(t *testing.T) {
+	var deleted []string
+	m := testTUIModel(&deleted)
+	m.deps.fileExists = func(string) bool { return true }
+	m = selectAction(m, "delete")
+	m, _ = send(m, key("enter"))
+	m, _ = send(m, append(typeText("DELETE"), key("enter"))...)
+	m, _ = send(m, key("esc"))
+	if len(deleted) != 1 || len(m.summaries) != 1 || m.screen != screenStates {
+		t.Fatalf("deleted=%v summaries=%d screen=%v", deleted, len(m.summaries), m.screen)
+	}
+	if strings.HasSuffix(deleted[0], ".backup") {
+		t.Fatalf("escape should decline backup deletion: %v", deleted)
+	}
+}
+
+func TestTUIDeleteBackupErrorIsShownWhenLastStateIsRemoved(t *testing.T) {
+	var deleted []string
+	m := testTUIModel(&deleted)
+	m.summaries = m.summaries[:1]
+	m.deps.fileExists = func(string) bool { return true }
+	m.deps.deleteFile = func(path string) error {
+		deleted = append(deleted, path)
+		if strings.HasSuffix(path, ".backup") {
+			return errors.New("permission denied")
+		}
+		return nil
+	}
+	m = selectAction(m, "delete")
+	m, _ = send(m, key("enter"))
+	m, _ = send(m, append(typeText("DELETE"), key("enter"))...)
+	m, _ = send(m, append(typeText("y"), key("enter"))...)
+	if !m.quitting || !strings.Contains(m.status, "delete failed: permission denied") ||
+		!strings.Contains(m.status, "No Terraform state files remain") {
+		t.Fatalf("quitting=%v status=%q", m.quitting, m.status)
+	}
+}
+
+func TestTUIInputAppendsSpaceOnce(t *testing.T) {
+	var deleted []string
+	m := testTUIModel(&deleted)
+	m.screen, m.inKind = screenInput, inputAddress
+	m, _ = send(m, tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
+	if m.inValue != " " {
+		t.Fatalf("input=%q, want one space", m.inValue)
 	}
 }
 
@@ -182,5 +249,24 @@ func TestWindowKeepsCursorVisible(t *testing.T) {
 		if cursor < start || cursor >= end || end-start != 10 {
 			t.Fatalf("cursor %d outside [%d,%d)", cursor, start, end)
 		}
+	}
+}
+
+func TestTUIViewKeepsStateSuffixAndWrapsSelectedPath(t *testing.T) {
+	var deleted []string
+	m := testTUIModel(&deleted)
+	path := "/very/long/shared/root/that/exceeds/the/terminal/width/alpha.tfstate"
+	m.summaries = []state.Summary{
+		{Path: path, ResourceCount: 2},
+		{Path: strings.TrimSuffix(path, "alpha.tfstate") + "beta.tfstate"},
+	}
+	m.width = 36
+	if view := m.View(); !strings.Contains(view, "alpha.tfstate") || !strings.Contains(view, "beta.tfstate") {
+		t.Fatalf("state picker does not retain distinguishing suffixes: %q", view)
+	}
+	m.screen = screenActions
+	view := strings.ReplaceAll(m.View(), "\n", "")
+	if !strings.Contains(view, path) {
+		t.Fatalf("selected path is not fully readable: %q", view)
 	}
 }

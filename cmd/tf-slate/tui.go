@@ -232,6 +232,9 @@ func (m tuiModel) listCmd(path string) tea.Cmd {
 }
 
 func (m tuiModel) handleResources(msg resourcesMsg) tuiModel {
+	if m.quitting || m.screen != screenActions || len(m.summaries) == 0 || m.current().Path != msg.path {
+		return m
+	}
 	if msg.err != nil {
 		m.status = fmt.Sprintf("terraform state list failed: %v", msg.err)
 		return m
@@ -286,6 +289,10 @@ func (m tuiModel) execTerraform(back tuiScreen, args ...string) (tea.Model, tea.
 func (m tuiModel) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
+		if m.inKind == inputDeleteBackup {
+			m.status = fmt.Sprintf("Deleted %s", m.current().Path)
+			return m.dropCurrent()
+		}
 		m.screen, m.status = screenActions, "Cancelled"
 		return m, nil
 	case tea.KeyBackspace:
@@ -295,9 +302,6 @@ func (m tuiModel) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyRunes, tea.KeySpace:
 		m.inValue += string(msg.Runes)
-		if msg.Type == tea.KeySpace {
-			m.inValue += " "
-		}
 		return m, nil
 	case tea.KeyEnter:
 		return m.submitInput()
@@ -306,6 +310,7 @@ func (m tuiModel) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) submitInput() (tea.Model, tea.Cmd) {
+	rawValue := m.inValue
 	value := strings.TrimSpace(m.inValue)
 	summary := m.current()
 	m.inValue = ""
@@ -323,7 +328,7 @@ func (m tuiModel) submitInput() (tea.Model, tea.Cmd) {
 		}
 		return m.execTerraform(screenActions, stateArgs(summary.Path, "destroy")...)
 	case inputDelete:
-		if value != "DELETE" {
+		if rawValue != "DELETE" {
 			m.screen, m.status = screenActions, "Delete cancelled"
 			return m, nil
 		}
@@ -364,6 +369,9 @@ func (m tuiModel) dropCurrent() (tea.Model, tea.Cmd) {
 	if len(m.summaries) == 0 {
 		m.quitting = true
 		m.status = "No Terraform state files remain"
+		if status != "" {
+			m.status = status + "\n" + m.status
+		}
 		return m, tea.Quit
 	}
 	m.cursor = min(m.cursor, len(m.summaries)-1)
@@ -405,6 +413,47 @@ func (m tuiModel) listView(items []string, cursor int) string {
 	return b.String()
 }
 
+func truncatePathSuffix(path string, width int) string {
+	if lipgloss.Width(path) <= width {
+		return path
+	}
+	const ellipsis = "…"
+	if width <= lipgloss.Width(ellipsis) {
+		return ellipsis
+	}
+	runes := []rune(path)
+	suffix := ""
+	for i := len(runes) - 1; i >= 0; i-- {
+		candidate := string(runes[i:])
+		if lipgloss.Width(ellipsis+candidate) > width {
+			break
+		}
+		suffix = candidate
+	}
+	return ellipsis + suffix
+}
+
+func wrapPath(path string, width int) string {
+	width = max(width, 1)
+	var lines []string
+	var line strings.Builder
+	lineWidth := 0
+	for _, r := range path {
+		runeWidth := lipgloss.Width(string(r))
+		if lineWidth > 0 && lineWidth+runeWidth > width {
+			lines = append(lines, line.String())
+			line.Reset()
+			lineWidth = 0
+		}
+		line.WriteRune(r)
+		lineWidth += runeWidth
+	}
+	if line.Len() > 0 {
+		lines = append(lines, line.String())
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m tuiModel) View() string {
 	if m.quitting {
 		if m.status != "" {
@@ -419,12 +468,15 @@ func (m tuiModel) View() string {
 		b.WriteString(styleHelp.Render("↑/↓ move · enter select · q quit") + "\n\n")
 		items := make([]string, len(m.summaries))
 		for i, s := range m.summaries {
-			items[i] = fmt.Sprintf("%s  (%d resources)", s.Path, s.ResourceCount)
+			count := fmt.Sprintf("  (%d resources)", s.ResourceCount)
+			pathWidth := max(1, m.width-lipgloss.Width("› ")-lipgloss.Width(count))
+			items[i] = truncatePathSuffix(s.Path, pathWidth) + count
 		}
 		b.WriteString(m.listView(items, m.cursor))
 		b.WriteString("\n" + m.summaryLine())
 	case screenActions:
-		b.WriteString(styleTitle.Render("State: "+m.current().Path) + "\n")
+		b.WriteString(styleTitle.Render("State:") + "\n")
+		b.WriteString(styleTitle.Render(wrapPath(m.current().Path, m.width)) + "\n")
 		b.WriteString(m.summaryLine() + "\n")
 		b.WriteString(styleHelp.Render("↑/↓ move · enter run · esc back · q quit") + "\n\n")
 		items := make([]string, len(stateActionItems))
