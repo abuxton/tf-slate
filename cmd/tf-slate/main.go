@@ -683,7 +683,7 @@ func renderStatePrompt(w io.Writer, summaries []state.Summary, selected int, typ
 	summary := summaries[selected]
 	fmt.Fprintf(w, "\n%sSelect a state file%s\n", c.boldCyan, c.reset)
 	fmt.Fprintf(w, "%sReview state files discovered in the scan.%s\n", c.cyan, c.reset)
-	fmt.Fprintf(w, "%sUse ↑/↓ then Enter, or type a number or q.%s\n", c.yellow, c.reset)
+	fmt.Fprintf(w, "%sUse ↑/↓ then Enter, or type a number or q to quit.%s\n", c.yellow, c.reset)
 	fmt.Fprintf(w, "%sCurrent [%d/%d]%s\n", c.green, selected+1, len(summaries), c.reset)
 	fmt.Fprintf(w, "%s%s%s\n", c.cyan, summary.Path, c.reset)
 	fmt.Fprintf(w, "%s%d resources | providers: %s | terraform: %s%s\n", c.cyan, summary.ResourceCount, valueOrDash(strings.Join(summary.Providers, ",")), valueOrDash(summary.TerraformVersion), c.reset)
