@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- New release entries are prepended here automatically by `task release:prepare`. -->
 
+## [v0.2.0] - 2026-11-18
+
+- Merge pull request #32 from abuxton/feature/29-delete-state-gomod (0f184a0)
+- Improve confirmation check for delete action (aadcc80)
+- feat(tui): add delete state file action (74b10b3)
+- chore(deps): update go directive to 1.26 and dependencies (ddd4cf1)
+- Merge pull request #25 from abuxton/dependabot/github_actions/actions/checkout-7 (fbad180)
+- Merge branch 'main' into dependabot/github_actions/actions/checkout-7 (64520d6)
+- Merge pull request #30 from abuxton/fix/28-destroy-working-dir (500b7c2)
+- fix(tui): run terraform in the state file directory (2a46955)
+- Merge pull request #24 from abuxton/fix/interactive-client-menus (cc2c93d)
+- Merge pull request #27 from abuxton:feature/agents-md (8da39bd)
+- chore: update project skills and skills-lock.json (ded1d03)
+- docs: add AGENTS.md as governance source and slim copilot-instructions (13d0413)
+- build(deps): bump actions/checkout from 6 to 7 (18a6dd5)
+- fix: strip ANSI codes for non-terminal output and handle lone ESC without blocking (db44a2a)
+- Merge pull request #23 from abuxton/dependabot/github_actions/actions/setup-go-6 (825ff12)
+- fix: improve interactive client menus (c504086)
+- Merge pull request #22 from abuxton/dependabot/github_actions/actions/checkout-6 (88ababc)
+- build(deps): bump actions/setup-go from 5 to 6 (20cabe7)
+- build(deps): bump actions/checkout from 4 to 6 (775c56d)
+- Merge pull request #21 from abuxton/patch/abc-readme (8291b0f)
+- Enhance README with installation and usage instructions (001a93f)
+- fix: clean release temp files (34b148f)
+
+
 ## [v0.1.0] - 2026-04-20
 
 - fix: support release changelog insertion on macOS (3ed8f5f)
