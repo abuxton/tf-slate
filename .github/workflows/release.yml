@@ -3,7 +3,8 @@ name: Release
 # Fires when a PR whose head branch starts with `release/v` is merged into main.
 # The workflow extracts the version from the branch name, creates an annotated
 # tag on the merge commit, and publishes a GitHub Release with auto-generated
-# release notes.
+# release notes plus per-OS/arch archives and checksums.txt, then a PR that
+# updates Formula/tf-slate.rb from those checksums.
 #
 # Required repository setup (one-time):
 #   1. Settings → Actions → General → Workflow permissions → "Read and write permissions"
@@ -49,14 +50,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build release binary (embeds version string)
-        run: |
-          mkdir -p dist
-          go build \
-            -ldflags "-X main.version=${{ steps.version.outputs.version }}" \
-            -o dist/tf-slate \
-            ./cmd/tf-slate
-
       - name: Create and push annotated tag
         run: |
           git config user.name "github-actions[bot]"
@@ -65,6 +58,15 @@ jobs:
             -m "Release ${{ steps.version.outputs.version }}"
           git push origin "${{ steps.version.outputs.version }}"
 
+      # GoReleaser only builds the per-OS/arch archives and checksums.txt here;
+      # publishing and release notes stay with `gh release create` below.
+      - name: Build release archives (darwin/linux, amd64/arm64)
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean --skip=publish,announce
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -72,7 +74,8 @@ jobs:
           gh release create "${{ steps.version.outputs.version }}" \
             --title "Release ${{ steps.version.outputs.version }}" \
             --generate-notes \
-            dist/tf-slate
+            dist/*.tar.gz \
+            dist/checksums.txt
 
   update-formula:
     name: Open Homebrew formula PR
