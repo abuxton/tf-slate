@@ -421,7 +421,7 @@ func deleteStateFile(session interactiveSession, summary state.Summary) bool {
 	fmt.Fprintf(session.out, "This permanently deletes %s\n", summary.Path)
 	fmt.Fprint(session.out, "Type DELETE to confirm: ")
 	confirm, _ := session.reader.ReadString('\n')
-	if strings.TrimSpace(confirm) != "DELETE" {
+	if strings.TrimSuffix(strings.TrimSuffix(confirm, "\n"), "\r") != "DELETE" {
 		fmt.Fprintln(session.out, "Delete cancelled")
 		return false
 	}
