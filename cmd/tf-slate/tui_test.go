@@ -23,7 +23,7 @@ func testTUIModel(deleted *[]string) tuiModel {
 	return newTUIModel(deps, []state.Summary{
 		{Path: "/tmp/a/terraform.tfstate", ResourceCount: 2, Providers: []string{"aws"}},
 		{Path: "/tmp/b/terraform.tfstate", ResourceCount: 0},
-	})
+	}, false, false)
 }
 
 func key(s string) tea.KeyMsg {
@@ -182,6 +182,7 @@ func TestTUIDeleteBackupErrorIsShownWhenLastStateIsRemoved(t *testing.T) {
 	var deleted []string
 	m := testTUIModel(&deleted)
 	m.summaries = m.summaries[:1]
+	m.all = m.summaries
 	m.deps.fileExists = func(string) bool { return true }
 	m.deps.deleteFile = func(path string) error {
 		deleted = append(deleted, path)
@@ -214,6 +215,7 @@ func TestTUIDeleteOffersBackupAndQuitsWhenEmpty(t *testing.T) {
 	var deleted []string
 	m := testTUIModel(&deleted)
 	m.summaries = m.summaries[:1]
+	m.all = m.summaries
 	m.deps.fileExists = func(string) bool { return true }
 	m = selectAction(m, "delete")
 	m, _ = send(m, key("enter"))
@@ -268,5 +270,44 @@ func TestTUIViewKeepsStateSuffixAndWrapsSelectedPath(t *testing.T) {
 	view := strings.ReplaceAll(m.View(), "\n", "")
 	if !strings.Contains(view, path) {
 		t.Fatalf("selected path is not fully readable: %q", view)
+	}
+}
+
+func TestTUIHidesAndTogglesZeroResourceStates(t *testing.T) {
+	var deleted []string
+	base := testTUIModel(&deleted)
+	m := newTUIModel(base.deps, []state.Summary{
+		{Path: "/tmp/empty/terraform.tfstate", ResourceCount: 0},
+		{Path: "/tmp/few/terraform.tfstate", ResourceCount: 1},
+		{Path: "/tmp/many/terraform.tfstate", ResourceCount: 5},
+	}, true, true)
+	if len(m.summaries) != 2 || m.summaries[0].Path != "/tmp/many/terraform.tfstate" {
+		t.Fatalf("default view should be non-zero and weighted, got %v", m.summaries)
+	}
+	m, _ = send(m, key("down"), key("z"))
+	if len(m.summaries) != 3 || m.summaries[2].ResourceCount != 0 {
+		t.Fatalf("z should reveal empty states, got %v", m.summaries)
+	}
+	if m.current().Path != "/tmp/few/terraform.tfstate" {
+		t.Fatalf("selection should be kept across toggle, got %s", m.current().Path)
+	}
+	m, _ = send(m, key("z"))
+	if len(m.summaries) != 2 {
+		t.Fatalf("z again should hide empty states, got %v", m.summaries)
+	}
+}
+
+func TestTUIDeleteKeepsHiddenStates(t *testing.T) {
+	var deleted []string
+	base := testTUIModel(&deleted)
+	m := newTUIModel(base.deps, []state.Summary{
+		{Path: "/tmp/empty/terraform.tfstate", ResourceCount: 0},
+		{Path: "/tmp/one/terraform.tfstate", ResourceCount: 1},
+	}, true, true)
+	m = selectAction(m, "delete")
+	m, _ = send(m, key("enter"))
+	m, cmd := send(m, append(typeText("DELETE"), key("enter"))...)
+	if cmd != nil || len(m.summaries) != 1 || m.summaries[0].ResourceCount != 0 || m.hideZero {
+		t.Fatalf("remaining empty state should be shown; summaries=%v hideZero=%v", m.summaries, m.hideZero)
 	}
 }

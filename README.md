@@ -82,7 +82,7 @@ go run ./cmd/tf-slate -root /path/to/search
 go run ./cmd/tf-slate /path/to/search
 ```
 
-Use `-non-interactive` or `--ni` to print summaries without prompts. On a terminal the interactive mode is a full-screen interface (arrow keys or `j`/`k`, `enter`, `esc` to go back, `q` to quit); use `--classic` for the line-based prompts.
+Use `-non-interactive` or `--ni` to print summaries without prompts. On a terminal the interactive mode is a full-screen interface (arrow keys or `j`/`k`, `enter`, `esc` to go back, `z` to show or hide zero-resource state files, `q` to quit); use `--classic` for the line-based prompts.
 
 Running `tf-slate` with no arguments now prints the CLI help, and a single positional path is treated the same as `-root /path`.
 
@@ -121,6 +121,7 @@ In interactive mode, selecting `list` now shows the resources in the chosen stat
 Short aliases are also available for the new flags:
 
 - `--ni` for `-non-interactive`
+- Interactive mode defaults to `-nz -w` (non-zero, weighted); pass `-nz=false` or `-w=false` to change that, or press `z` in the full-screen interface to reveal empty state files. Non-interactive output is unchanged.
 - `--classic` to use the line-based prompts instead of the full-screen interface
 - `-o` for `-output`
 - `-s` for `-summarize`

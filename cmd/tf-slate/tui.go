@@ -80,7 +80,10 @@ type execDoneMsg struct {
 
 type tuiModel struct {
 	deps      tuiDeps
+	all       []state.Summary
 	summaries []state.Summary
+	hideZero  bool
+	weighted  bool
 	screen    tuiScreen
 	cursor    int
 	action    int
@@ -109,8 +112,31 @@ var stateActionItems = []actionItem{
 	{"quit", "Quit"},
 }
 
-func newTUIModel(deps tuiDeps, summaries []state.Summary) tuiModel {
-	return tuiModel{deps: deps, summaries: summaries, height: 24, width: 80}
+func newTUIModel(deps tuiDeps, summaries []state.Summary, hideZero, weighted bool) tuiModel {
+	m := tuiModel{deps: deps, all: append([]state.Summary(nil), summaries...), hideZero: hideZero, weighted: weighted, height: 24, width: 80}
+	m.rebuild("")
+	return m
+}
+
+// rebuild recomputes the visible states from all, keeping selectedPath selected when it remains visible.
+func (m *tuiModel) rebuild(selectedPath string) {
+	visible := make([]state.Summary, 0, len(m.all))
+	for _, s := range m.all {
+		if m.hideZero && s.ResourceCount == 0 {
+			continue
+		}
+		visible = append(visible, s)
+	}
+	if m.weighted {
+		sortSummariesWeighted(visible)
+	}
+	m.summaries = visible
+	m.cursor = 0
+	for i, s := range visible {
+		if s.Path == selectedPath {
+			m.cursor = i
+		}
+	}
 }
 
 func (m tuiModel) Init() tea.Cmd { return nil }
@@ -166,7 +192,16 @@ func (m tuiModel) updateStates(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.cursor = moveSelection(m.cursor, len(m.summaries), 1)
 	case "enter":
-		m.screen, m.action, m.status = screenActions, 0, ""
+		if len(m.summaries) > 0 {
+			m.screen, m.action, m.status = screenActions, 0, ""
+		}
+	case "z":
+		selected := ""
+		if len(m.summaries) > 0 {
+			selected = m.current().Path
+		}
+		m.hideZero = !m.hideZero
+		m.rebuild(selected)
 	case "q", "esc":
 		return m.quit()
 	}
@@ -365,8 +400,15 @@ func (m tuiModel) deleteCurrent() (tea.Model, tea.Cmd) {
 // dropCurrent removes the selected entry after its file was deleted.
 func (m tuiModel) dropCurrent() (tea.Model, tea.Cmd) {
 	status := m.status
-	m.summaries = append(m.summaries[:m.cursor:m.cursor], m.summaries[m.cursor+1:]...)
-	if len(m.summaries) == 0 {
+	deleted := m.current().Path
+	remaining := m.all[:0:0]
+	for _, s := range m.all {
+		if s.Path != deleted {
+			remaining = append(remaining, s)
+		}
+	}
+	m.all = remaining
+	if len(m.all) == 0 {
 		m.quitting = true
 		m.status = "No Terraform state files remain"
 		if status != "" {
@@ -374,7 +416,14 @@ func (m tuiModel) dropCurrent() (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	}
-	m.cursor = min(m.cursor, len(m.summaries)-1)
+	cursor := m.cursor
+	m.rebuild("")
+	if len(m.summaries) == 0 {
+		// Only zero-resource states are left; show them rather than an empty list.
+		m.hideZero = false
+		m.rebuild("")
+	}
+	m.cursor = min(cursor, len(m.summaries)-1)
 	m.screen, m.status = screenStates, status
 	return m, nil
 }
@@ -465,7 +514,7 @@ func (m tuiModel) View() string {
 	switch m.screen {
 	case screenStates:
 		b.WriteString(styleTitle.Render("Select a state file") + "\n")
-		b.WriteString(styleHelp.Render("↑/↓ move · enter select · q quit") + "\n\n")
+		b.WriteString(styleHelp.Render("↑/↓ move · enter select · z "+m.zeroToggleLabel()+" · q quit") + "\n\n")
 		items := make([]string, len(m.summaries))
 		for i, s := range m.summaries {
 			count := fmt.Sprintf("  (%d resources)", s.ResourceCount)
@@ -496,6 +545,19 @@ func (m tuiModel) View() string {
 		b.WriteString("\n" + styleWarn.Render(m.status) + "\n")
 	}
 	return b.String()
+}
+
+func (m tuiModel) zeroToggleLabel() string {
+	if m.hideZero {
+		hidden := 0
+		for _, s := range m.all {
+			if s.ResourceCount == 0 {
+				hidden++
+			}
+		}
+		return fmt.Sprintf("show %d empty", hidden)
+	}
+	return "hide empty"
 }
 
 func (m tuiModel) summaryLine() string {
@@ -543,8 +605,8 @@ func (m tuiModel) inputView() string {
 
 // runBubbleTUI starts the Bubble Tea interface. It renders inline (no alternate
 // screen) so terraform output remains in the scrollback.
-func runBubbleTUI(summaries []state.Summary) error {
-	_, err := tea.NewProgram(newTUIModel(defaultTUIDeps(), summaries)).Run()
+func runBubbleTUI(summaries []state.Summary, hideZero, weighted bool) error {
+	_, err := tea.NewProgram(newTUIModel(defaultTUIDeps(), summaries, hideZero, weighted)).Run()
 	return err
 }
 

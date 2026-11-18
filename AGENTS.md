@@ -35,7 +35,7 @@ go test ./internal/state -run TestSummarizeStateFile   # focused test
 ## Architecture rules
 
 - Keep the package split sharp: parsing/discovery in `internal/state`, rendering in `internal/output`, UX and subprocesses in `cmd/tf-slate`. Never put `terraform` subprocess calls in `internal/state`.
-- The default interactive UI is Bubble Tea in `cmd/tf-slate/tui.go` (ADR `docs/adr/0001-tui-library.md`); side effects go through `tuiDeps` so tests drive `Update` directly. Keep the classic prompt loop working as the `--classic`/non-TTY fallback. Regenerate the README GIF with `task docs:demo` when the UI changes.
+- The default interactive UI is Bubble Tea in `cmd/tf-slate/tui.go` (ADR `docs/adr/0001-tui-library.md`); side effects go through `tuiDeps` so tests drive `Update` directly. Keep the classic prompt loop working as the `--classic`/non-TTY fallback. Interactive mode defaults to `-nz -w` (explicit flags win; `z` toggles empty states in the TUI); `--ni` defaults are unchanged. Regenerate the README GIF with `task docs:demo` when the UI changes.
 - Interactive actions are thin wrappers over `terraform state list`, `terraform state show` and `terraform destroy`; `visit` opens a shell in the state file directory and exits the client.
 - If `terraform` is missing, print the manual fallback message; do not crash.
 - Keep dependencies minimal. Any `go.mod` change must be followed by `task mod:tidy` (CI fails on an untidy `go.mod`/`go.sum`). Keep the `go` directive on a supported Go release.
