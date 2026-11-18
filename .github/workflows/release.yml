@@ -3,15 +3,18 @@ name: Release
 # Fires when a PR whose head branch starts with `release/v` is merged into main.
 # The workflow extracts the version from the branch name, creates an annotated
 # tag on the merge commit, and publishes a GitHub Release with auto-generated
-# release notes.
+# release notes plus per-OS/arch archives and checksums.txt, then a PR that
+# updates Formula/tf-slate.rb from those checksums.
 #
 # Required repository setup (one-time):
 #   1. Settings → Actions → General → Workflow permissions → "Read and write permissions"
 #      (or grant `contents: write` to the default GITHUB_TOKEN at the org level).
 #   2. Create a "release" label in the repository so that `task release:prepare`
 #      can apply it to the PR:  Settings → Labels → New label → "release".
-#   3. (Optional) Enable branch protection on `main` so that the release PR must
-#      pass CI checks before it can be merged.
+#   3. Settings → Actions → General → enable "Allow GitHub Actions to create and
+#      approve pull requests" (needed by the update-formula job).
+#   4. Environment `release` with the owner as required reviewer, and the
+#      `release/**` ruleset (see docs/release-policy.md).
 
 on:
   pull_request:
@@ -22,9 +25,15 @@ jobs:
   create-release:
     name: Create tag and GitHub Release
     # Only run when the PR was actually merged and its head branch is a release branch.
+    # Only the repository owner may trigger a release, and only from a branch
+    # in this repository (never a fork).
     if: >
       github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.head.ref, 'release/v')
+      startsWith(github.event.pull_request.head.ref, 'release/v') &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.merged_by.login == github.repository_owner
+    # The `release` environment requires approval from the owner.
+    environment: release
     runs-on: ubuntu-latest
     permissions:
       contents: write  # required to push tags and create GitHub Releases
@@ -32,58 +41,68 @@ jobs:
     steps:
       - name: Extract version from branch name
         id: version
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
-          BRANCH="${{ github.event.pull_request.head.ref }}"
+          if ! [[ "${BRANCH}" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release branch name" >&2
+            exit 1
+          fi
           VERSION="${BRANCH#release/}"
           echo "Releasing ${VERSION}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Fetch full history so the annotated tag can be created on the exact
           # merge commit (the default shallow clone only fetches the tip).
           fetch-depth: 0
-          ref: main
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
 
-      - name: Build release binary (embeds version string)
-        run: |
-          mkdir -p dist
-          go build \
-            -ldflags "-X main.version=${{ steps.version.outputs.version }}" \
-            -o dist/tf-slate \
-            ./cmd/tf-slate
-
       - name: Create and push annotated tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.version }}" \
-            -m "Release ${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.version }}"
+          git tag -a "${VERSION}" -m "Release ${VERSION}"
+          git push origin "${VERSION}"
+
+      # GoReleaser only builds the per-OS/arch archives and checksums.txt here;
+      # publishing and release notes stay with `gh release create` below.
+      - name: Build release archives (darwin/linux, amd64/arm64)
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7
+        with:
+          distribution: goreleaser
+          version: v2.20.2
+          args: release --clean --skip=publish,announce
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "${{ steps.version.outputs.version }}" \
-            --title "Release ${{ steps.version.outputs.version }}" \
+          gh release create "${VERSION}" \
+            --title "Release ${VERSION}" \
             --generate-notes \
-            dist/tf-slate
+            dist/*.tar.gz \
+            dist/checksums.txt
 
   update-formula:
     name: Open Homebrew formula PR
     needs: create-release
+    environment: release
     runs-on: ubuntu-latest
     permissions:
       contents: write       # push the formula branch
       pull-requests: write  # open the formula PR
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: main
 
@@ -93,6 +112,7 @@ jobs:
           VERSION: ${{ github.event.pull_request.head.ref }}
         run: |
           VERSION="${VERSION#release/}"
+          [[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version" >&2; exit 1; }
           scripts/update-formula.sh "${VERSION}"
           if git diff --quiet -- Formula/tf-slate.rb; then
             echo "Formula already up to date"

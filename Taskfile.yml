@@ -85,6 +85,11 @@ tasks:
       - scripts/demo-fixtures.sh
       - vhs docs/media/tui-demo.tape
 
+  package:snapshot:
+    desc: Build the darwin/linux release archives locally without publishing (requires goreleaser)
+    cmds:
+      - goreleaser release --snapshot --clean --skip=publish
+
   brew:audit:
     desc: Lint and audit the Homebrew formula (requires brew)
     cmds:

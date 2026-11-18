@@ -1,0 +1,35 @@
+name: Release Security
+
+# Security evaluation for release PRs. Make the `release-security` check
+# required via the `release/**` ruleset.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release-security:
+    name: release-security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - name: Secret scan
+        run: go run github.com/zricethezav/gitleaks/v8@v8.28.0 detect --source . --redact --no-banner
+      - name: Workflow lint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - name: Require SHA-pinned actions
+        run: |
+          if grep -rnE 'uses: [^./][^ ]*@' .github/workflows | grep -vE '@[0-9a-f]{40}( |$)'; then
+            echo "Actions must be pinned to a full commit SHA" >&2
+            exit 1
+          fi
