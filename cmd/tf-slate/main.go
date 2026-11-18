@@ -16,9 +16,48 @@ import (
 
 	"github.com/abuxton/tf-slate/internal/output"
 	"github.com/abuxton/tf-slate/internal/state"
+	"golang.org/x/term"
 )
 
 var version = "dev"
+
+const (
+	ansiReset    = "\x1b[0m"
+	ansiBoldCyan = "\x1b[1;36m"
+	ansiCyan     = "\x1b[36m"
+	ansiGreen    = "\x1b[32m"
+	ansiYellow   = "\x1b[33m"
+)
+
+// colorSet holds ANSI escape codes used for terminal rendering.
+// All fields are empty strings when color output is disabled.
+type colorSet struct {
+	reset, boldCyan, cyan, green, yellow string
+}
+
+var fullColors = colorSet{
+	reset:    ansiReset,
+	boldCyan: ansiBoldCyan,
+	cyan:     ansiCyan,
+	green:    ansiGreen,
+	yellow:   ansiYellow,
+}
+
+// colorsFor returns a colorSet with ANSI codes enabled only when w is a
+// terminal and the NO_COLOR environment variable is not set.
+func colorsFor(w io.Writer) colorSet {
+	if os.Getenv("NO_COLOR") != "" {
+		return colorSet{}
+	}
+	f, ok := w.(*os.File)
+	if !ok {
+		return colorSet{}
+	}
+	if term.IsTerminal(int(f.Fd())) {
+		return fullColors
+	}
+	return colorSet{}
+}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -129,9 +168,24 @@ type options struct {
 type interactiveSession struct {
 	reader           *bufio.Reader
 	out              io.Writer
-	runTerraform     func(args ...string)
-	captureTerraform func(args ...string) (string, error)
+	stdin            *os.File
+	runTerraform     func(dir string, args ...string)
+	captureTerraform func(dir string, args ...string) (string, error)
+	checkSetup       func(dir string) error
 	visitDir         func(string) error
+}
+
+type menuOption struct {
+	value       string
+	label       string
+	description string
+}
+
+type menuEvent struct {
+	move      int
+	text      string
+	backspace bool
+	confirm   bool
 }
 
 func newFlagSet(stderr io.Writer) (*flag.FlagSet, *options) {
@@ -244,29 +298,25 @@ func runTUI(summaries []state.Summary) {
 	session := interactiveSession{
 		reader:           bufio.NewReader(os.Stdin),
 		out:              os.Stdout,
+		stdin:            os.Stdin,
 		runTerraform:     runTerraform,
 		captureTerraform: captureTerraform,
+		checkSetup:       checkTerraformSetup,
 		visitDir:         openShellInDir,
 	}
 	runTUIWithSession(session, summaries)
 }
 
 func runTUIWithSession(session interactiveSession, summaries []state.Summary) {
+	selected := 0
 	for {
-		fmt.Fprint(session.out, "\nSelect a state file number to review (or q to quit): ")
-		input, _ := session.reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-		if strings.EqualFold(input, "q") {
+		next, quit := promptStateSelection(session, summaries, selected)
+		if quit {
 			return
 		}
+		selected = next
 
-		idx, err := strconv.Atoi(input)
-		if err != nil || idx < 1 || idx > len(summaries) {
-			fmt.Fprintln(session.out, "Invalid selection")
-			continue
-		}
-
-		if runStateActions(session, summaries[idx-1]) {
+		if runStateActions(session, summaries[selected]) {
 			return
 		}
 	}
@@ -276,19 +326,20 @@ func runStateActions(session interactiveSession, summary state.Summary) bool {
 	for {
 		fmt.Fprintf(session.out, "\nState: %s\n", summary.Path)
 		fmt.Fprintf(session.out, "Resources: %d | Providers: %s | Terraform: %s | Serial: %d\n", summary.ResourceCount, strings.Join(summary.Providers, ","), valueOrDash(summary.TerraformVersion), summary.Serial)
-		fmt.Fprintln(session.out, "Suggested follow-up commands:")
-		fmt.Fprintf(session.out, "  list   -> terraform state list -state=%q\n", summary.Path)
-		fmt.Fprintf(session.out, "  show   -> terraform state show -state=%q <resource-address>\n", summary.Path)
-		fmt.Fprintf(session.out, "  destroy-> terraform destroy -state=%q\n", summary.Path)
-		fmt.Fprintf(session.out, "  visit  -> open a shell in %q and exit tf-slate\n", filepath.Dir(summary.Path))
-		fmt.Fprint(session.out, "Run a suggested command now? [list/show/destroy/visit/back/n]: ")
-
-		action, _ := session.reader.ReadString('\n')
-		action = strings.TrimSpace(strings.ToLower(action))
+		action := promptMenu(session, "Suggested follow-up commands", "Choose the next Terraform action for this state file.", []menuOption{
+			{value: "list", label: "List resources", description: describeTerraform(summary.Path, "state", "list")},
+			{value: "show", label: "Show a resource by address", description: describeTerraform(summary.Path, "state", "show", "<resource-address>")},
+			{value: "destroy", label: "Destroy resources", description: describeTerraform(summary.Path, "destroy")},
+			{value: "visit", label: "Open a shell in the state directory", description: fmt.Sprintf("Open a shell in %q and exit tf-slate", filepath.Dir(summary.Path))},
+			{value: "back", label: "Back to the state list", description: "Return to the previous menu."},
+			{value: "quit", label: "Quit", description: "Exit tf-slate."},
+		})
 
 		switch action {
 		case "list":
-			handleListAction(session, summary.Path)
+			if handleListAction(session, summary.Path) {
+				return true
+			}
 		case "show":
 			fmt.Fprint(session.out, "Enter resource address: ")
 			addr, _ := session.reader.ReadString('\n')
@@ -297,7 +348,18 @@ func runStateActions(session interactiveSession, summary state.Summary) bool {
 				fmt.Fprintln(session.out, "No resource address entered")
 				continue
 			}
-			session.runTerraform("state", "show", "-state="+summary.Path, addr)
+			if !session.setupReady(filepath.Dir(summary.Path)) {
+				continue
+			}
+			session.runTerraform(filepath.Dir(summary.Path), stateArgs(summary.Path, "state", "show", addr)...)
+			switch handlePostShowAction(session, summary.Path) {
+			case "list":
+				if handleListAction(session, summary.Path) {
+					return true
+				}
+			case "quit":
+				return true
+			}
 		case "destroy":
 			fmt.Fprint(session.out, "Type DESTROY to confirm: ")
 			confirm, _ := session.reader.ReadString('\n')
@@ -305,7 +367,10 @@ func runStateActions(session interactiveSession, summary state.Summary) bool {
 				fmt.Fprintln(session.out, "Destroy cancelled")
 				continue
 			}
-			session.runTerraform("destroy", "-state="+summary.Path)
+			if !session.setupReady(filepath.Dir(summary.Path)) {
+				continue
+			}
+			session.runTerraform(filepath.Dir(summary.Path), stateArgs(summary.Path, "destroy")...)
 		case "visit":
 			fmt.Fprintf(session.out, "Opening shell in %s\n", filepath.Dir(summary.Path))
 			if err := session.visitDir(filepath.Dir(summary.Path)); err != nil {
@@ -316,49 +381,65 @@ func runStateActions(session interactiveSession, summary state.Summary) bool {
 		case "back", "b", "n":
 			fmt.Fprintln(session.out, "Returning to the state file list")
 			return false
+		case "quit", "q":
+			return true
 		default:
 			fmt.Fprintln(session.out, "No command executed")
 		}
 	}
 }
 
-func handleListAction(session interactiveSession, statePath string) {
-	output, err := session.captureTerraform("state", "list", "-state="+statePath)
+func handleListAction(session interactiveSession, statePath string) bool {
+	output, err := session.captureTerraform(filepath.Dir(statePath), stateArgs(statePath, "state", "list")...)
 	if err != nil {
 		fmt.Fprintf(session.out, "terraform state list failed: %v\n", err)
 		if strings.TrimSpace(output) != "" {
 			fmt.Fprintln(session.out, output)
 		}
-		return
+		return false
 	}
 
 	resources := parseTerraformListOutput(output)
 	if len(resources) == 0 {
 		fmt.Fprintln(session.out, "No resources found in the selected state file")
-		return
+		return false
 	}
 
 	for {
-		fmt.Fprintln(session.out, "State resources:")
-		for i, resource := range resources {
-			fmt.Fprintf(session.out, "  %d. %s\n", i+1, resource)
+		options := make([]menuOption, 0, len(resources)+2)
+		for _, resource := range resources {
+			options = append(options, menuOption{
+				value:       "resource:" + resource,
+				label:       resource,
+				description: describeTerraform(statePath, "state", "show", resource),
+			})
 		}
-		fmt.Fprint(session.out, "Choose a resource to inspect or type back: ")
+		options = append(options,
+			menuOption{value: "back", label: "Back to state actions", description: "Return to the previous menu."},
+			menuOption{value: "quit", label: "Quit", description: "Exit tf-slate."},
+		)
 
-		input, _ := session.reader.ReadString('\n')
-		input = strings.TrimSpace(strings.ToLower(input))
-		switch input {
-		case "back", "b":
-			return
+		selection := promptMenu(session, "State resources", "Select a resource to inspect.", options)
+		switch selection {
+		case "back":
+			return false
+		case "quit":
+			return true
 		}
 
-		idx, err := strconv.Atoi(input)
-		if err != nil || idx < 1 || idx > len(resources) {
-			fmt.Fprintln(session.out, "Invalid selection")
+		resource := strings.TrimPrefix(selection, "resource:")
+		if !session.setupReady(filepath.Dir(statePath)) {
 			continue
 		}
-
-		session.runTerraform("state", "show", "-state="+statePath, resources[idx-1])
+		session.runTerraform(filepath.Dir(statePath), stateArgs(statePath, "state", "show", resource)...)
+		switch handlePostShowAction(session, statePath) {
+		case "list":
+			continue
+		case "back":
+			return false
+		case "quit":
+			return true
+		}
 	}
 }
 
@@ -375,12 +456,368 @@ func parseTerraformListOutput(output string) []string {
 	return resources
 }
 
-func runTerraform(args ...string) {
+func handlePostShowAction(session interactiveSession, statePath string) string {
+	for {
+		action := promptMenu(session, "What next?", "Choose what to do after viewing resource details.", []menuOption{
+			{value: "list", label: "List another resource", description: describeTerraform(statePath, "state", "list")},
+			{value: "back", label: "Back to state actions", description: "Return to the previous menu."},
+			{value: "quit", label: "Quit", description: "Exit tf-slate."},
+		})
+
+		switch action {
+		case "list":
+			return "list"
+		case "back":
+			return "back"
+		case "quit":
+			return "quit"
+		default:
+			fmt.Fprintln(session.out, "Invalid selection")
+		}
+	}
+}
+
+func promptStateSelection(session interactiveSession, summaries []state.Summary, selected int) (int, bool) {
+	if len(summaries) == 0 {
+		return 0, true
+	}
+	if selected < 0 || selected >= len(summaries) {
+		selected = 0
+	}
+
+	var typed string
+	for {
+		renderStatePrompt(session.out, summaries, selected, typed)
+
+		event, ok := readMenuEvent(session)
+		if !ok {
+			return selected, true
+		}
+
+		if event.move != 0 {
+			selected = moveSelection(selected, len(summaries), event.move)
+			if !event.confirm {
+				continue
+			}
+		}
+
+		if event.backspace {
+			if len(typed) > 0 {
+				typed = typed[:len(typed)-1]
+			}
+			continue
+		}
+
+		if event.text != "" {
+			typed += event.text
+		}
+		if !event.confirm {
+			continue
+		}
+
+		input := strings.TrimSpace(typed)
+		typed = ""
+		if input == "" {
+			return selected, false
+		}
+
+		switch strings.ToLower(input) {
+		case "q", "quit", "exit":
+			return selected, true
+		}
+
+		idx, err := strconv.Atoi(input)
+		if err == nil && idx >= 1 && idx <= len(summaries) {
+			return idx - 1, false
+		}
+
+		fmt.Fprintln(session.out, "Invalid selection")
+	}
+}
+
+func promptMenu(session interactiveSession, title, description string, options []menuOption) string {
+	selected := 0
+	var typed string
+	for {
+		renderMenu(session.out, title, description, options, selected, typed)
+
+		event, ok := readMenuEvent(session)
+		if !ok {
+			return "quit"
+		}
+
+		if event.move != 0 {
+			selected = moveSelection(selected, len(options), event.move)
+			if !event.confirm {
+				continue
+			}
+		}
+
+		if event.backspace {
+			if len(typed) > 0 {
+				typed = typed[:len(typed)-1]
+			}
+			continue
+		}
+
+		if event.text != "" {
+			typed += event.text
+		}
+		if !event.confirm {
+			continue
+		}
+
+		input := strings.TrimSpace(typed)
+		typed = ""
+		if input == "" {
+			return options[selected].value
+		}
+
+		switch strings.ToLower(input) {
+		case "q", "quit", "exit":
+			return "quit"
+		case "back", "b":
+			return "back"
+		}
+
+		idx, err := strconv.Atoi(input)
+		if err == nil && idx >= 1 && idx <= len(options) {
+			return options[idx-1].value
+		}
+
+		for idx, option := range options {
+			if strings.EqualFold(input, option.value) || strings.EqualFold(input, option.label) {
+				selected = idx
+				return option.value
+			}
+		}
+
+		fmt.Fprintln(session.out, "Invalid selection")
+	}
+}
+
+func renderStatePrompt(w io.Writer, summaries []state.Summary, selected int, typed string) {
+	c := colorsFor(w)
+	summary := summaries[selected]
+	fmt.Fprintf(w, "\n%sSelect a state file%s\n", c.boldCyan, c.reset)
+	fmt.Fprintf(w, "%sReview state files discovered in the scan.%s\n", c.cyan, c.reset)
+	fmt.Fprintf(w, "%sUse ↑/↓ then Enter, or type a number or q.%s\n", c.yellow, c.reset)
+	fmt.Fprintf(w, "%sCurrent [%d/%d]%s\n", c.green, selected+1, len(summaries), c.reset)
+	fmt.Fprintf(w, "%s%s%s\n", c.cyan, summary.Path, c.reset)
+	fmt.Fprintf(w, "%s%d resources | providers: %s | terraform: %s%s\n", c.cyan, summary.ResourceCount, valueOrDash(strings.Join(summary.Providers, ",")), valueOrDash(summary.TerraformVersion), c.reset)
+	fmt.Fprintf(w, "%sSelection [%d/%d]:%s %s\n", c.yellow, selected+1, len(summaries), c.reset, typed)
+}
+
+func renderMenu(w io.Writer, title, description string, options []menuOption, selected int, typed string) {
+	c := colorsFor(w)
+	fmt.Fprintf(w, "\n%s%s%s\n", c.boldCyan, title, c.reset)
+	if description != "" {
+		fmt.Fprintf(w, "%s%s%s\n", c.cyan, description, c.reset)
+	}
+	fmt.Fprintf(w, "%sUse ↑/↓ then Enter to choose. Type a number, back, or q instead.%s\n", c.yellow, c.reset)
+	for idx, option := range options {
+		prefix := "  "
+		color := c.cyan
+		if idx == selected {
+			prefix = "› "
+			color = c.green
+		}
+		line := option.label
+		if option.description != "" {
+			line += " — " + option.description
+		}
+		fmt.Fprintf(w, "%s%s%s%s\n", color, prefix, line, c.reset)
+	}
+	fmt.Fprintf(w, "%sSelection:%s %s\n", c.yellow, c.reset, typed)
+}
+
+func readInteractiveInput(reader *bufio.Reader) (string, bool) {
+	input, err := reader.ReadString('\n')
+	if err != nil && len(input) == 0 {
+		return "", false
+	}
+	return strings.TrimRight(input, "\r\n"), true
+}
+
+func readMenuEvent(session interactiveSession) (menuEvent, bool) {
+	if session.stdin != nil && term.IsTerminal(int(session.stdin.Fd())) {
+		return readMenuEventFromTerminal(session.stdin)
+	}
+	return readBufferedMenuEvent(session.reader)
+}
+
+func readBufferedMenuEvent(reader *bufio.Reader) (menuEvent, bool) {
+	input, ok := readInteractiveInput(reader)
+	if !ok {
+		return menuEvent{}, false
+	}
+	move, arrowInput := parseArrowInput(input)
+	if arrowInput {
+		return menuEvent{move: move, confirm: true}, true
+	}
+	return menuEvent{text: input, confirm: true}, true
+}
+
+func readMenuEventFromTerminal(stdin *os.File) (menuEvent, bool) {
+	fd := int(stdin.Fd())
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return readBufferedMenuEvent(bufio.NewReader(stdin))
+	}
+	defer term.Restore(fd, state)
+
+	event, ok := readTTYMenuEventFromReader(bufio.NewReader(stdin))
+	if !ok {
+		return menuEvent{}, false
+	}
+	return event, true
+}
+
+func readTTYMenuEventFromReader(r *bufio.Reader) (menuEvent, bool) {
+	buf := make([]byte, 1)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return menuEvent{}, false
+	}
+
+	switch buf[0] {
+	case '\r', '\n':
+		return menuEvent{confirm: true}, true
+	case 0x7f, 0x08:
+		return menuEvent{backspace: true}, true
+	case 0x1b:
+		// Only consume the escape sequence when bytes are already buffered.
+		// Arrow keys send the full 3-byte sequence atomically, so "[A"/"[B"
+		// are in the buffer immediately. A lone ESC leaves no bytes buffered,
+		// so we treat it as a back/cancel event without blocking.
+		if r.Buffered() == 0 {
+			return menuEvent{text: "back"}, true
+		}
+		seq := make([]byte, 2)
+		if _, err := io.ReadFull(r, seq); err != nil {
+			return menuEvent{}, false
+		}
+		switch string(seq) {
+		case "[A":
+			return menuEvent{move: -1}, true
+		case "[B":
+			return menuEvent{move: 1}, true
+		default:
+			return menuEvent{}, true
+		}
+	default:
+		if buf[0] >= 32 && buf[0] <= 126 {
+			return menuEvent{text: string(buf[0])}, true
+		}
+		return menuEvent{}, true
+	}
+}
+
+func parseArrowInput(input string) (int, bool) {
+	remaining := strings.TrimSpace(input)
+	if remaining == "" {
+		return 0, false
+	}
+
+	move := 0
+	for len(remaining) > 0 {
+		switch {
+		case strings.HasPrefix(remaining, "\x1b[A"):
+			move--
+			remaining = strings.TrimPrefix(remaining, "\x1b[A")
+		case strings.HasPrefix(remaining, "\x1b[B"):
+			move++
+			remaining = strings.TrimPrefix(remaining, "\x1b[B")
+		default:
+			return 0, false
+		}
+	}
+	return move, true
+}
+
+func moveSelection(selected, total, move int) int {
+	if total == 0 {
+		return selected
+	}
+	updated := selected
+	if move > 0 {
+		for i := 0; i < move; i++ {
+			updated = (updated + 1) % total
+		}
+		return updated
+	}
+	for i := move; i < 0; i++ {
+		updated--
+		if updated < 0 {
+			updated = total - 1
+		}
+	}
+	return updated
+}
+
+// defaultStateFile is the state path Terraform's local backend uses on its own,
+// so -state is only needed (and its deprecation warning only accepted) for other names.
+const defaultStateFile = "terraform.tfstate"
+
+// stateArgs builds terraform arguments for subcommand, selecting statePath only when
+// it is not the default state file of its directory. The last element of subcommand
+// may be a resource address, which must stay after the flag.
+func stateArgs(statePath string, subcommand ...string) []string {
+	if filepath.Base(statePath) == defaultStateFile {
+		return subcommand
+	}
+	stateFlag := "-state=" + statePath
+	switch {
+	case len(subcommand) >= 3 && subcommand[0] == "state" && subcommand[1] == "show":
+		return append([]string{"state", "show", stateFlag}, subcommand[2:]...)
+	case len(subcommand) >= 2 && subcommand[0] == "state":
+		return append([]string{"state", subcommand[1], stateFlag}, subcommand[2:]...)
+	default:
+		return append([]string{subcommand[0], stateFlag}, subcommand[1:]...)
+	}
+}
+
+func describeTerraform(statePath string, subcommand ...string) string {
+	return fmt.Sprintf("(cd %q && terraform %s)", filepath.Dir(statePath), strings.Join(stateArgs(statePath, subcommand...), " "))
+}
+
+func (s interactiveSession) setupReady(dir string) bool {
+	if s.checkSetup == nil {
+		return true
+	}
+	if err := s.checkSetup(dir); err != nil {
+		fmt.Fprintf(s.out, "%v\n", err)
+		return false
+	}
+	return true
+}
+
+// checkTerraformSetup verifies dir holds the configuration and initialized providers
+// that commands needing provider schemas (show, destroy) load from the working directory.
+func checkTerraformSetup(dir string) error {
+	configs, err := filepath.Glob(filepath.Join(dir, "*.tf*"))
+	hasConfig := false
+	for _, c := range configs {
+		if strings.HasSuffix(c, ".tf") || strings.HasSuffix(c, ".tf.json") {
+			hasConfig = true
+			break
+		}
+	}
+	if err != nil || !hasConfig {
+		return fmt.Errorf("no Terraform configuration (*.tf) found in %s; terraform needs the configuration that created this state. Use visit to work there manually", dir)
+	}
+	if info, err := os.Stat(filepath.Join(dir, ".terraform")); err != nil || !info.IsDir() {
+		return fmt.Errorf("%s is not initialized; run terraform init there first (use visit to open a shell)", dir)
+	}
+	return nil
+}
+
+func runTerraform(dir string, args ...string) {
 	if _, err := exec.LookPath("terraform"); err != nil {
 		fmt.Println("terraform executable not found; copy and run the suggested command manually")
 		return
 	}
 	cmd := exec.Command("terraform", args...)
+	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -389,11 +826,12 @@ func runTerraform(args ...string) {
 	}
 }
 
-func captureTerraform(args ...string) (string, error) {
+func captureTerraform(dir string, args ...string) (string, error) {
 	if _, err := exec.LookPath("terraform"); err != nil {
 		return "", errors.New("terraform executable not found")
 	}
 	cmd := exec.Command("terraform", args...)
+	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	return string(output), err
 }
