@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- New release entries are prepended here automatically by `task release:prepare`. -->
 
+## [v0.3.0] - 2026-11-18
+
+- Merge pull request #41 from abuxton/feature/39-readme-badges (aa2d028)
+- Merge pull request #40 from abuxton/feature/36-prebuilt-packages (8365a66)
+- fix: use patched Go toolchain for security scan (5e88877)
+- docs(readme): add Homebrew, Ruby formula and Copilot badges (2dddae0)
+- ci(release): harden release workflow and add owner-only release policy (8725b04)
+- docs: document prebuilt archives and formula generation (c4f1474)
+- feat(release): publish darwin/linux amd64/arm64 archives and checksums (9c53d1c)
+- Merge pull request #38 from abuxton/feature/33-bubbletea-tui (1b83777)
+- update test (15fbebd)
+- update quit message (06191a9)
+- docs: re-record TUI demo GIF with the empty-state toggle (1cf8051)
+- feat(tui): default interactive view to non-zero and weighted (397fe3c)
+- fix(tui): address review feedback (177ede3)
+- docs: add TUI demo GIF and task docs:demo (a86b301)
+- feat(tui): make a Bubble Tea interface the default interactive mode (2017c90)
+- Merge pull request #37 from abuxton/docs/33-tui-spike (b6a51ff)
+- docs(adr): evaluate TUI libraries and recommend Bubble Tea (3ff2cb1)
+- Merge pull request #35 from abuxton/feature/31-homebrew-tap (49cd94c)
+- feat(brew): make the repo a self-contained Homebrew tap (a6ee648)
+
+
 ## [v0.2.0] - 2026-11-18
 
 - Merge pull request #32 from abuxton/feature/29-delete-state-gomod (0f184a0)
