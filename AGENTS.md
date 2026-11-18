@@ -46,6 +46,7 @@ go test ./internal/state -run TestSummarizeStateFile   # focused test
 - Use `filepath` APIs only (Linux and Windows compatible); skip `.git` during traversal.
 - Unreadable or invalid state files are skipped with a stderr note; processing continues.
 - Destroy requires the exact confirmation string `DESTROY`.
+- Terraform subprocesses must run with `cmd.Dir` set to the state file's directory (providers and config load from the working directory). `show`/`destroy` are guarded by `checkTerraformSetup` (needs `*.tf` and `.terraform/`). Pass `-state` only for non-default state file names (`stateArgs`).
 - State parsing: support top-level `resources` and nested `values.root_module`/`child_modules`; ignore `mode == "data"`; count managed resources by `len(instances)` (zero instances counts as `1`); normalize providers to short names (`aws` from `registry.terraform.io/hashicorp/aws`), from `provider` or `provider_name`.
 - Summary contract: path, managed resource count, providers, Terraform version, serial.
 - CLI flag aliases: `--ni`/`-non-interactive`, `-o`/`-output`, `-s`/`-summarize`, `-nz`/`-non-zero`, `-w`/`-weighted`, `-v`/`--version`. No args prints help; a single positional path equals `-root`. Structured outputs omit the footer summary table. Update README when changing any of this.

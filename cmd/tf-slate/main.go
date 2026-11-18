@@ -169,8 +169,9 @@ type interactiveSession struct {
 	reader           *bufio.Reader
 	out              io.Writer
 	stdin            *os.File
-	runTerraform     func(args ...string)
-	captureTerraform func(args ...string) (string, error)
+	runTerraform     func(dir string, args ...string)
+	captureTerraform func(dir string, args ...string) (string, error)
+	checkSetup       func(dir string) error
 	visitDir         func(string) error
 }
 
@@ -300,6 +301,7 @@ func runTUI(summaries []state.Summary) {
 		stdin:            os.Stdin,
 		runTerraform:     runTerraform,
 		captureTerraform: captureTerraform,
+		checkSetup:       checkTerraformSetup,
 		visitDir:         openShellInDir,
 	}
 	runTUIWithSession(session, summaries)
@@ -325,9 +327,9 @@ func runStateActions(session interactiveSession, summary state.Summary) bool {
 		fmt.Fprintf(session.out, "\nState: %s\n", summary.Path)
 		fmt.Fprintf(session.out, "Resources: %d | Providers: %s | Terraform: %s | Serial: %d\n", summary.ResourceCount, strings.Join(summary.Providers, ","), valueOrDash(summary.TerraformVersion), summary.Serial)
 		action := promptMenu(session, "Suggested follow-up commands", "Choose the next Terraform action for this state file.", []menuOption{
-			{value: "list", label: "List resources", description: fmt.Sprintf("terraform state list -state=%q", summary.Path)},
-			{value: "show", label: "Show a resource by address", description: fmt.Sprintf("terraform state show -state=%q <resource-address>", summary.Path)},
-			{value: "destroy", label: "Destroy resources", description: fmt.Sprintf("terraform destroy -state=%q", summary.Path)},
+			{value: "list", label: "List resources", description: describeTerraform(summary.Path, "state", "list")},
+			{value: "show", label: "Show a resource by address", description: describeTerraform(summary.Path, "state", "show", "<resource-address>")},
+			{value: "destroy", label: "Destroy resources", description: describeTerraform(summary.Path, "destroy")},
 			{value: "visit", label: "Open a shell in the state directory", description: fmt.Sprintf("Open a shell in %q and exit tf-slate", filepath.Dir(summary.Path))},
 			{value: "back", label: "Back to the state list", description: "Return to the previous menu."},
 			{value: "quit", label: "Quit", description: "Exit tf-slate."},
@@ -346,7 +348,10 @@ func runStateActions(session interactiveSession, summary state.Summary) bool {
 				fmt.Fprintln(session.out, "No resource address entered")
 				continue
 			}
-			session.runTerraform("state", "show", "-state="+summary.Path, addr)
+			if !session.setupReady(filepath.Dir(summary.Path)) {
+				continue
+			}
+			session.runTerraform(filepath.Dir(summary.Path), stateArgs(summary.Path, "state", "show", addr)...)
 			switch handlePostShowAction(session, summary.Path) {
 			case "list":
 				if handleListAction(session, summary.Path) {
@@ -362,7 +367,10 @@ func runStateActions(session interactiveSession, summary state.Summary) bool {
 				fmt.Fprintln(session.out, "Destroy cancelled")
 				continue
 			}
-			session.runTerraform("destroy", "-state="+summary.Path)
+			if !session.setupReady(filepath.Dir(summary.Path)) {
+				continue
+			}
+			session.runTerraform(filepath.Dir(summary.Path), stateArgs(summary.Path, "destroy")...)
 		case "visit":
 			fmt.Fprintf(session.out, "Opening shell in %s\n", filepath.Dir(summary.Path))
 			if err := session.visitDir(filepath.Dir(summary.Path)); err != nil {
@@ -382,7 +390,7 @@ func runStateActions(session interactiveSession, summary state.Summary) bool {
 }
 
 func handleListAction(session interactiveSession, statePath string) bool {
-	output, err := session.captureTerraform("state", "list", "-state="+statePath)
+	output, err := session.captureTerraform(filepath.Dir(statePath), stateArgs(statePath, "state", "list")...)
 	if err != nil {
 		fmt.Fprintf(session.out, "terraform state list failed: %v\n", err)
 		if strings.TrimSpace(output) != "" {
@@ -403,7 +411,7 @@ func handleListAction(session interactiveSession, statePath string) bool {
 			options = append(options, menuOption{
 				value:       "resource:" + resource,
 				label:       resource,
-				description: fmt.Sprintf("terraform state show -state=%q %s", statePath, resource),
+				description: describeTerraform(statePath, "state", "show", resource),
 			})
 		}
 		options = append(options,
@@ -420,7 +428,10 @@ func handleListAction(session interactiveSession, statePath string) bool {
 		}
 
 		resource := strings.TrimPrefix(selection, "resource:")
-		session.runTerraform("state", "show", "-state="+statePath, resource)
+		if !session.setupReady(filepath.Dir(statePath)) {
+			continue
+		}
+		session.runTerraform(filepath.Dir(statePath), stateArgs(statePath, "state", "show", resource)...)
 		switch handlePostShowAction(session, statePath) {
 		case "list":
 			continue
@@ -448,7 +459,7 @@ func parseTerraformListOutput(output string) []string {
 func handlePostShowAction(session interactiveSession, statePath string) string {
 	for {
 		action := promptMenu(session, "What next?", "Choose what to do after viewing resource details.", []menuOption{
-			{value: "list", label: "List another resource", description: fmt.Sprintf("terraform state list -state=%q", statePath)},
+			{value: "list", label: "List another resource", description: describeTerraform(statePath, "state", "list")},
 			{value: "back", label: "Back to state actions", description: "Return to the previous menu."},
 			{value: "quit", label: "Quit", description: "Exit tf-slate."},
 		})
@@ -743,12 +754,70 @@ func moveSelection(selected, total, move int) int {
 	return updated
 }
 
-func runTerraform(args ...string) {
+// defaultStateFile is the state path Terraform's local backend uses on its own,
+// so -state is only needed (and its deprecation warning only accepted) for other names.
+const defaultStateFile = "terraform.tfstate"
+
+// stateArgs builds terraform arguments for subcommand, selecting statePath only when
+// it is not the default state file of its directory. The last element of subcommand
+// may be a resource address, which must stay after the flag.
+func stateArgs(statePath string, subcommand ...string) []string {
+	if filepath.Base(statePath) == defaultStateFile {
+		return subcommand
+	}
+	stateFlag := "-state=" + statePath
+	switch {
+	case len(subcommand) >= 3 && subcommand[0] == "state" && subcommand[1] == "show":
+		return append([]string{"state", "show", stateFlag}, subcommand[2:]...)
+	case len(subcommand) >= 2 && subcommand[0] == "state":
+		return append([]string{"state", subcommand[1], stateFlag}, subcommand[2:]...)
+	default:
+		return append([]string{subcommand[0], stateFlag}, subcommand[1:]...)
+	}
+}
+
+func describeTerraform(statePath string, subcommand ...string) string {
+	return fmt.Sprintf("(cd %q && terraform %s)", filepath.Dir(statePath), strings.Join(stateArgs(statePath, subcommand...), " "))
+}
+
+func (s interactiveSession) setupReady(dir string) bool {
+	if s.checkSetup == nil {
+		return true
+	}
+	if err := s.checkSetup(dir); err != nil {
+		fmt.Fprintf(s.out, "%v\n", err)
+		return false
+	}
+	return true
+}
+
+// checkTerraformSetup verifies dir holds the configuration and initialized providers
+// that commands needing provider schemas (show, destroy) load from the working directory.
+func checkTerraformSetup(dir string) error {
+	configs, err := filepath.Glob(filepath.Join(dir, "*.tf*"))
+	hasConfig := false
+	for _, c := range configs {
+		if strings.HasSuffix(c, ".tf") || strings.HasSuffix(c, ".tf.json") {
+			hasConfig = true
+			break
+		}
+	}
+	if err != nil || !hasConfig {
+		return fmt.Errorf("no Terraform configuration (*.tf) found in %s; terraform needs the configuration that created this state. Use visit to work there manually", dir)
+	}
+	if info, err := os.Stat(filepath.Join(dir, ".terraform")); err != nil || !info.IsDir() {
+		return fmt.Errorf("%s is not initialized; run terraform init there first (use visit to open a shell)", dir)
+	}
+	return nil
+}
+
+func runTerraform(dir string, args ...string) {
 	if _, err := exec.LookPath("terraform"); err != nil {
 		fmt.Println("terraform executable not found; copy and run the suggested command manually")
 		return
 	}
 	cmd := exec.Command("terraform", args...)
+	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -757,11 +826,12 @@ func runTerraform(args ...string) {
 	}
 }
 
-func captureTerraform(args ...string) (string, error) {
+func captureTerraform(dir string, args ...string) (string, error) {
 	if _, err := exec.LookPath("terraform"); err != nil {
 		return "", errors.New("terraform executable not found")
 	}
 	cmd := exec.Command("terraform", args...)
+	cmd.Dir = dir
 	output, err := cmd.CombinedOutput()
 	return string(output), err
 }
