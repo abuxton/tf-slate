@@ -71,7 +71,7 @@ go test ./internal/state -run TestSummarizeStateFile   # focused test
 - Before opening a PR run `task ci`; PRs target `main` and must pass the Go CI workflow.
 - Do not edit `CHANGELOG.md` manually; `task release:prepare` prepends entries.
 - Releases: `task release:prepare VERSION=x.y.z DRY_RUN=true` to preview; merging a `release/vX.Y.Z` PR triggers tagging and the GitHub Release. Avoid `release:tag` unless necessary.
-- Homebrew: this repo is its own tap (`Formula/tf-slate.rb`, source build). Never hand-edit url/sha256; use `task brew:update VERSION=x.y.z` (the Release workflow opens this PR). Run `task brew:audit` after formula changes. Prebuilt Linux/macOS packages are planned.
+- Homebrew: this repo is its own tap (`Formula/tf-slate.rb`). Releases build darwin/linux amd64/arm64 archives plus `checksums.txt` with GoReleaser (`.goreleaser.yaml`, `task package:snapshot`). `scripts/update-formula.sh` regenerates the whole formula from `checksums.txt`; never hand-edit urls/checksums, use `task brew:update VERSION=x.y.z` (the Release workflow opens this PR). Run `task brew:audit` after formula changes. Keep archive names (`tf-slate_<version>_<os>_<arch>.tar.gz`) in sync between GoReleaser and the script. macOS signing and `.deb`/`.rpm` are planned.
 
 ## Security and safety
 

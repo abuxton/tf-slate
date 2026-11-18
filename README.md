@@ -46,17 +46,35 @@ tf-slate -v
 ```
 
 Upgrade with `brew upgrade tf-slate`; remove with `brew uninstall tf-slate`
-and `brew untap abuxton/tf-slate`. The formula builds from the tagged source
-archive, so it works on macOS and Linux (Linuxbrew) and needs Go only at build
-time. Terraform is optional and only needed for the interactive list/show/destroy
-follow-ups.
+and `brew untap abuxton/tf-slate`. Terraform is optional and only needed for the
+interactive list/show/destroy follow-ups.
 
-Prebuilt Linux and macOS packages (per-OS/arch release assets with bottle-style
-formula blocks) are planned for a future release.
+Starting with the first release published after the prebuilt archives were
+introduced, the formula installs the prebuilt binary for your platform (macOS or
+Linux, `amd64` or `arm64`) and needs no Go toolchain. Until then, and for
+`brew install --HEAD tf-slate`, it builds from source (Go required at build time).
+
+### Prebuilt archives
+
+Each release attaches `tf-slate_<version>_<os>_<arch>.tar.gz` for `darwin` and
+`linux` on `amd64` and `arm64`, plus a `checksums.txt` (SHA256):
+
+```
+curl -LO https://github.com/abuxton/tf-slate/releases/download/vX.Y.Z/tf-slate_X.Y.Z_linux_amd64.tar.gz
+curl -LO https://github.com/abuxton/tf-slate/releases/download/vX.Y.Z/checksums.txt
+shasum -a 256 -c --ignore-missing checksums.txt
+tar -xzf tf-slate_X.Y.Z_linux_amd64.tar.gz tf-slate
+```
+
+macOS binaries are not yet signed or notarized, so Gatekeeper may quarantine a
+manually downloaded binary (`xattr -d com.apple.quarantine tf-slate`); Homebrew
+installs are unaffected. `.deb`/`.rpm` packages are planned.
 
 Maintainers: `task brew:audit` lints the formula, `task brew:test` installs it
 from the checkout, and `task brew:update VERSION=x.y.z` bumps it. The Release
-workflow opens a formula-bump PR automatically after each release.
+workflow opens a formula-bump PR automatically after each release, generating the
+formula from the release's `checksums.txt`. `task package:snapshot` builds the
+archives locally (requires `goreleaser`).
 
 ### Build locally
 
@@ -196,10 +214,11 @@ Once the PR is reviewed and merged, the **Release** GitHub Actions workflow
 (`.github/workflows/release.yml`) fires automatically and:
 
 1. Extracts the version from the branch name (`release/v0.1.0` → `v0.1.0`).
-2. Builds the binary with the version string embedded.
-3. Creates an annotated git tag (`v0.1.0`) on the merge commit.
-4. Publishes a GitHub Release with auto-generated release notes and the
-   compiled binary as an asset.
+2. Creates an annotated git tag (`v0.1.0`) on the merge commit.
+3. Builds per-OS/arch archives with GoReleaser (`darwin`/`linux` on `amd64`/`arm64`,
+   version string embedded) plus `checksums.txt`.
+4. Publishes a GitHub Release with auto-generated release notes, the archives
+   and the checksums.
 5. Opens a PR bumping `Formula/tf-slate.rb` to the new tag (requires
    "Allow GitHub Actions to create and approve pull requests").
 
