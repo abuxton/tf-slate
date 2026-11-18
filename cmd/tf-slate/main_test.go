@@ -384,7 +384,7 @@ func TestRunTUIWithSessionUsesCompactStatePrompt(t *testing.T) {
 	for _, want := range []string{
 		"/tmp/second.tfstate",
 		"Selection [1/2]:",
-		"Use \u2191/\u2193 then Enter, or type a number or q.",
+		"Use \u2191/\u2193 then Enter, or type a number or q to quit.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("runTUIWithSession() output missing %q in %q", want, got)
