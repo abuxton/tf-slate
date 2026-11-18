@@ -5,6 +5,9 @@
 [![License](https://img.shields.io/github/license/abuxton/tf-slate?style=flat-square)](https://github.com/abuxton/tf-slate/blob/main/LICENSE)
 [![Last Commit](https://img.shields.io/github/last-commit/abuxton/tf-slate?style=flat-square&logo=github)](https://github.com/abuxton/tf-slate/commits/main)
 [![Contributors](https://img.shields.io/github/contributors/abuxton/tf-slate?style=flat-square&logo=github)](https://github.com/abuxton/tf-slate/graphs/contributors)
+[![Homebrew tap](https://img.shields.io/github/v/release/abuxton/tf-slate?style=flat-square&logo=homebrew&label=homebrew%20abuxton%2Ftf-slate%2Ftf-slate)](https://github.com/abuxton/tf-slate#homebrew)
+[![Formula: Ruby](https://img.shields.io/badge/formula-Ruby-CC342D?style=flat-square&logo=ruby&logoColor=white)](https://github.com/abuxton/tf-slate/blob/main/Formula/tf-slate.rb)
+[![Built with GitHub Copilot](https://img.shields.io/badge/built%20with-GitHub%20Copilot-000000?style=flat-square&logo=githubcopilot&logoColor=white)](https://github.com/abuxton/tf-slate/blob/main/AGENTS.md)
 
 `tf-slate` is a Go utility that discovers local Terraform state files (`*.tfstate`), summarizes each file, and provides an interactive terminal UI for follow-up operations.
 `tf` as in [Terraform](https://developer.hashicorp.com/terraform/cli/commands/state) and `slate` as in getting a ["clean slate"](https://dictionary.cambridge.org/dictionary/english/clean-slate).
