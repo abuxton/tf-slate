@@ -71,6 +71,7 @@ go test ./internal/state -run TestSummarizeStateFile   # focused test
 - Before opening a PR run `task ci`; PRs target `main` and must pass the Go CI workflow.
 - Do not edit `CHANGELOG.md` manually; `task release:prepare` prepends entries.
 - Releases: `task release:prepare VERSION=x.y.z DRY_RUN=true` to preview; merging a `release/vX.Y.Z` PR triggers tagging and the GitHub Release. Avoid `release:tag` unless necessary.
+- Homebrew: this repo is its own tap (`Formula/tf-slate.rb`, source build). Never hand-edit url/sha256; use `task brew:update VERSION=x.y.z` (the Release workflow opens this PR). Run `task brew:audit` after formula changes. Prebuilt Linux/macOS packages are planned.
 
 ## Security and safety
 

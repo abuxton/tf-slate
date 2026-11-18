@@ -78,6 +78,23 @@ tasks:
     cmds:
       - go mod tidy
 
+  brew:audit:
+    desc: Lint and audit the Homebrew formula (requires brew)
+    cmds:
+      - brew style Formula/tf-slate.rb
+      - brew audit --strict --online --formula Formula/tf-slate.rb
+
+  brew:test:
+    desc: Install the formula from this checkout and run its tests (requires brew)
+    cmds:
+      - brew install --build-from-source --formula ./Formula/tf-slate.rb
+      - brew test tf-slate
+
+  brew:update:
+    desc: "Point the formula at a released tag: task brew:update VERSION=0.2.0"
+    cmds:
+      - scripts/update-formula.sh {{.VERSION}}
+
   mod:update:
     desc: Update Go module dependencies and tidy the module graph
     cmds:
