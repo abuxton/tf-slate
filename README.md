@@ -7,10 +7,12 @@
 [![Contributors](https://img.shields.io/github/contributors/abuxton/tf-slate?style=flat-square&logo=github)](https://github.com/abuxton/tf-slate/graphs/contributors)
 
 `tf-slate` is a Go utility that discovers local Terraform state files (`*.tfstate`), summarizes each file, and provides an interactive terminal UI for follow-up operations.
-`tf` as in [Terraform](https://developer.hashicorp.com/terraform/cli/commands/state) and `slate` as in getting a ["clean slate"](https://dictionary.cambridge.org/dictionary/english/clean-slate). 
-A terarform helper utility to find and manage your terraform state files on your local file system.
+`tf` as in [Terraform](https://developer.hashicorp.com/terraform/cli/commands/state) and `slate` as in getting a ["clean slate"](https://dictionary.cambridge.org/dictionary/english/clean-slate).
+A terraform helper utility to find and manage your terraform state files on your local file system.
 
 ## Features
+
+![tf-slate interactive interface](docs/media/tui-demo.gif)
 
 - Recursively scans a filesystem path for Terraform state files (Linux and Windows path compatible via Go `filepath` APIs)
 - Optional summary output that groups discovered state files into `0 resources` and `> 0 resources`
@@ -21,7 +23,7 @@ A terarform helper utility to find and manage your terraform state files on your
   - resource count (managed resources)
   - provider/platform names
   - terraform version + serial metadata
-- Interactive TUI prompts that suggest and can run:
+- Full-screen interactive interface (Bubble Tea) that is the default on a terminal; `--classic` or a non-TTY falls back to line-based prompts. It suggests and can run:
   - `terraform state list` with a nested picker so you can inspect a listed resource or go `back`
   - `terraform state show`
   - `terraform destroy` (with explicit confirmation)
@@ -67,7 +69,7 @@ task build
 .dist/tf-slate . minimal usage search directory tress from $CWD.
  ```
 
- 
+
 ## Usage
 
 
@@ -80,7 +82,7 @@ go run ./cmd/tf-slate -root /path/to/search
 go run ./cmd/tf-slate /path/to/search
 ```
 
-Use `-non-interactive` or `--ni` to print summaries without prompts.
+Use `-non-interactive` or `--ni` to print summaries without prompts. On a terminal the interactive mode is a full-screen interface (arrow keys or `j`/`k`, `enter`, `esc` to go back, `q` to quit); use `--classic` for the line-based prompts.
 
 Running `tf-slate` with no arguments now prints the CLI help, and a single positional path is treated the same as `-root /path`.
 
@@ -119,6 +121,7 @@ In interactive mode, selecting `list` now shows the resources in the chosen stat
 Short aliases are also available for the new flags:
 
 - `--ni` for `-non-interactive`
+- `--classic` to use the line-based prompts instead of the full-screen interface
 - `-o` for `-output`
 - `-s` for `-summarize`
 - `-nz` for `-non-zero`
@@ -153,6 +156,9 @@ task mod:update
 
 # Run the skills installer helper
 task skills:install
+
+# Re-record the README demo GIF (needs vhs, ttyd and ffmpeg)
+task docs:demo
 ```
 
 ## Release workflow
